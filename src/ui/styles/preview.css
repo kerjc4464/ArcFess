@@ -1,0 +1,126 @@
+/* Preview Modal and Display Styles */
+
+.vectors-preview-panel {
+    max-height: 70vh;
+    overflow-y: auto;
+    padding: var(--vectors-spacing-lg);
+}
+
+.vectors-preview-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--vectors-spacing-lg);
+    padding-bottom: var(--vectors-spacing-md);
+    border-bottom: 1px solid var(--vectors-enhanced-border);
+}
+
+.vectors-preview-stats {
+    font-size: 0.9em;
+    color: var(--vectors-enhanced-primary);
+}
+
+/* Preview sections */
+.vectors-preview-section {
+    margin-bottom: var(--vectors-spacing-xl);
+}
+
+.vectors-preview-section h4 {
+    color: var(--vectors-enhanced-primary);
+    margin-bottom: var(--vectors-spacing-md);
+    display: flex;
+    align-items: center;
+    gap: var(--vectors-spacing-sm);
+}
+
+.vectors-preview-section h4 .item-count {
+    font-size: 0.85em;
+    color: var(--vectors-enhanced-text);
+    opacity: 0.7;
+}
+
+/* Preview items */
+.vectors-preview-item {
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-md);
+    padding: var(--vectors-spacing-md);
+    margin-bottom: var(--vectors-spacing-md);
+}
+
+.vectors-preview-item:hover {
+    border-color: var(--vectors-enhanced-primary);
+}
+
+.vectors-preview-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    margin-bottom: var(--vectors-spacing-sm);
+}
+
+.vectors-preview-item-title {
+    font-weight: bold;
+    color: var(--vectors-enhanced-primary);
+}
+
+.vectors-preview-item-meta {
+    font-size: 0.85em;
+    color: var(--vectors-enhanced-text);
+    opacity: 0.7;
+}
+
+.vectors-preview-item-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+}
+
+/* Collapsed state */
+.vectors-preview-item.collapsed .vectors-preview-item-content {
+    max-height: 100px;
+    overflow: hidden;
+    position: relative;
+}
+
+.vectors-preview-item.collapsed .vectors-preview-item-content::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    background: linear-gradient(transparent, var(--SmartThemeBlurTintColor));
+}
+
+.vectors-preview-toggle {
+    margin-top: var(--vectors-spacing-sm);
+    font-size: 0.85em;
+    color: var(--vectors-enhanced-primary);
+    cursor: pointer;
+    text-align: center;
+}
+
+.vectors-preview-toggle:hover {
+    text-decoration: underline;
+}
+
+/* Export button in preview */
+.vectors-preview-export {
+    margin-top: var(--vectors-spacing-lg);
+    text-align: center;
+}
+
+/* Responsive preview for smaller screens */
+@media screen and (max-width: 768px) {
+    .vectors-preview-panel {
+        max-height: 80vh;
+        padding: var(--vectors-spacing-md);
+    }
+    
+    .vectors-preview-controls {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--vectors-spacing-sm);
+    }
+}

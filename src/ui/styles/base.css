@@ -1,0 +1,68 @@
+/* Base styles and CSS variables for Vectors Enhanced */
+
+:root {
+    /* Extension-specific CSS variables */
+    --vectors-enhanced-primary: var(--SmartThemeQuoteColor);
+    --vectors-enhanced-secondary: var(--SmartThemeBlurTintColor);
+    --vectors-enhanced-success: var(--SmartThemeGreenColor, #44ff44);
+    --vectors-enhanced-error: var(--SmartThemeRedColor, #ff4444);
+    --vectors-enhanced-warning: var(--SmartThemeWarningColor, #ffaa44);
+    --vectors-enhanced-border: var(--SmartThemeBorderColor);
+    --vectors-enhanced-text: var(--SmartThemeBodyColor);
+    --vectors-enhanced-shadow: var(--SmartThemeShadowColor);
+    
+    /* Spacing */
+    --vectors-spacing-xs: 0.25rem;
+    --vectors-spacing-sm: 0.5rem;
+    --vectors-spacing-md: 0.75rem;
+    --vectors-spacing-lg: 1rem;
+    --vectors-spacing-xl: 1.5rem;
+    
+    /* Border radius */
+    --vectors-radius-sm: 4px;
+    --vectors-radius-md: 6px;
+    --vectors-radius-lg: 8px;
+}
+
+/* Base container styles */
+.vectors_enhanced_settings {
+    padding: var(--vectors-spacing-sm);
+}
+
+.vectors-enhanced-section {
+    margin-bottom: var(--vectors-spacing-lg);
+}
+
+.vectors-enhanced-section h3 {
+    margin-bottom: var(--vectors-spacing-md);
+    color: var(--vectors-enhanced-text);
+}
+
+.vectors-enhanced-section h4 {
+    margin-top: var(--vectors-spacing-sm);
+    margin-bottom: var(--vectors-spacing-sm);
+    font-size: 1.1rem;
+}
+
+/* Utility classes */
+.vectors-mb-1 { margin-bottom: var(--vectors-spacing-sm); }
+.vectors-mb-2 { margin-bottom: var(--vectors-spacing-md); }
+.vectors-mb-3 { margin-bottom: var(--vectors-spacing-lg); }
+.vectors-mt-1 { margin-top: var(--vectors-spacing-sm); }
+.vectors-mt-2 { margin-top: var(--vectors-spacing-md); }
+.vectors-mt-3 { margin-top: var(--vectors-spacing-lg); }
+
+.vectors-flex {
+    display: flex;
+    align-items: center;
+    gap: var(--vectors-spacing-sm);
+}
+
+.vectors-flex-between {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.vectors-hidden { display: none !important; }
+.vectors-disabled { opacity: 0.5; pointer-events: none; }

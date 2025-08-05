@@ -1,0 +1,112 @@
+/* Form and Input Styles */
+
+/* Input validation states */
+.vectors-input-error {
+    border-color: var(--vectors-enhanced-error) !important;
+    background-color: color-mix(in srgb, var(--vectors-enhanced-error) 5%, transparent);
+}
+
+.vectors-input-success {
+    border-color: var(--vectors-enhanced-success) !important;
+    background-color: color-mix(in srgb, var(--vectors-enhanced-success) 5%, transparent);
+}
+
+.vectors-validation-message {
+    font-size: 0.85em;
+    margin-top: var(--vectors-spacing-xs);
+    padding: var(--vectors-spacing-xs) var(--vectors-spacing-sm);
+    border-radius: var(--vectors-radius-sm);
+}
+
+.vectors-validation-error {
+    color: var(--vectors-enhanced-error);
+    background: color-mix(in srgb, var(--vectors-enhanced-error) 10%, transparent);
+}
+
+.vectors-validation-success {
+    color: var(--vectors-enhanced-success);
+    background: color-mix(in srgb, var(--vectors-enhanced-success) 10%, transparent);
+}
+
+/* Form groups */
+.vectors-form-group {
+    margin-bottom: var(--vectors-spacing-md);
+}
+
+.vectors-form-group label {
+    display: block;
+    margin-bottom: var(--vectors-spacing-xs);
+    font-weight: 500;
+}
+
+.vectors-form-group input,
+.vectors-form-group select,
+.vectors-form-group textarea {
+    width: 100%;
+}
+
+/* Radio groups */
+.vectors-radio-group {
+    display: flex;
+    gap: var(--vectors-spacing-md);
+    flex-wrap: wrap;
+}
+
+.vectors-radio-group label {
+    display: flex;
+    align-items: center;
+    gap: var(--vectors-spacing-xs);
+    cursor: pointer;
+}
+
+/* Inline forms */
+.vectors-inline-form {
+    display: flex;
+    gap: var(--vectors-spacing-sm);
+    align-items: end;
+}
+
+.vectors-inline-form .vectors-form-group {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+/* Settings groups */
+.vectors-settings-group {
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: var(--vectors-radius-md);
+    padding: var(--vectors-spacing-md);
+    margin-bottom: var(--vectors-spacing-md);
+}
+
+.vectors-settings-group h5 {
+    margin-bottom: var(--vectors-spacing-sm);
+    color: var(--vectors-enhanced-primary);
+}
+
+/* Toggle switches */
+.vectors-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--vectors-spacing-sm);
+}
+
+.vectors-toggle input[type="checkbox"] {
+    width: auto;
+}
+
+/* Number inputs with units */
+.vectors-input-with-unit {
+    display: flex;
+    align-items: center;
+    gap: var(--vectors-spacing-xs);
+}
+
+.vectors-input-with-unit input {
+    flex: 1;
+}
+
+.vectors-input-with-unit .unit {
+    font-size: 0.9em;
+    opacity: 0.7;
+}

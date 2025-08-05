@@ -1,0 +1,147 @@
+/* Task List and Management Styles */
+
+.vectors-task-list {
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-md);
+    padding: var(--vectors-spacing-md);
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.vectors-task-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--vectors-spacing-sm);
+    margin-bottom: var(--vectors-spacing-sm);
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: var(--vectors-radius-sm);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.vectors-task-item:last-child {
+    margin-bottom: 0;
+}
+
+.vectors-task-item:hover {
+    border-color: var(--vectors-enhanced-primary);
+}
+
+/* Task states */
+.vectors-task-item.active {
+    background: color-mix(in srgb, var(--vectors-enhanced-primary) 10%, var(--SmartThemeBlurTintColor));
+    border-color: var(--vectors-enhanced-primary);
+}
+
+.vectors-task-item.completed {
+    opacity: 0.7;
+}
+
+.vectors-task-item.error {
+    border-color: var(--vectors-enhanced-error);
+    background: color-mix(in srgb, var(--vectors-enhanced-error) 10%, var(--SmartThemeBlurTintColor));
+}
+
+/* Task info */
+.vectors-task-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--vectors-spacing-xs);
+}
+
+.vectors-task-name {
+    font-weight: bold;
+    color: var(--vectors-enhanced-text);
+    display: flex;
+    align-items: center;
+    gap: var(--vectors-spacing-xs);
+}
+
+.vectors-task-meta {
+    font-size: 0.85em;
+    color: var(--vectors-enhanced-text);
+    opacity: 0.7;
+}
+
+.vectors-task-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--vectors-spacing-xs);
+    padding: 2px 8px;
+    border-radius: var(--vectors-radius-sm);
+    font-size: 0.75em;
+    font-weight: bold;
+}
+
+.vectors-task-status.pending {
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--vectors-enhanced-text);
+}
+
+.vectors-task-status.running {
+    background: color-mix(in srgb, var(--vectors-enhanced-primary) 20%, transparent);
+    color: var(--vectors-enhanced-primary);
+}
+
+.vectors-task-status.completed {
+    background: color-mix(in srgb, var(--vectors-enhanced-success) 20%, transparent);
+    color: var(--vectors-enhanced-success);
+}
+
+.vectors-task-status.error {
+    background: color-mix(in srgb, var(--vectors-enhanced-error) 20%, transparent);
+    color: var(--vectors-enhanced-error);
+}
+
+/* Task actions */
+.vectors-task-actions {
+    display: flex;
+    gap: var(--vectors-spacing-xs);
+}
+
+.vectors-task-actions button {
+    padding: var(--vectors-spacing-xs);
+    background: transparent;
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-sm);
+    cursor: pointer;
+    font-size: 0.85em;
+    transition: all 0.2s ease;
+}
+
+.vectors-task-actions button:hover {
+    background: var(--vectors-enhanced-primary);
+    color: var(--SmartThemeBlurColor);
+    border-color: var(--vectors-enhanced-primary);
+}
+
+.vectors-task-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Task progress bar */
+.vectors-task-progress {
+    margin-top: var(--vectors-spacing-xs);
+    height: 4px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.vectors-task-progress-bar {
+    height: 100%;
+    background: var(--vectors-enhanced-primary);
+    transition: width 0.3s ease;
+}
+
+/* Empty state */
+.vectors-task-list-empty {
+    text-align: center;
+    padding: var(--vectors-spacing-xl);
+    color: var(--vectors-enhanced-text);
+    opacity: 0.6;
+    font-style: italic;
+}

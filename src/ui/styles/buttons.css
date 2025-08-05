@@ -1,0 +1,84 @@
+/* Button and Action Styles */
+
+/* Action buttons container */
+.vectors-enhanced-actions {
+    display: flex;
+    gap: var(--vectors-spacing-sm);
+    flex-wrap: wrap;
+    margin-top: var(--vectors-spacing-lg);
+}
+
+.vectors-enhanced-actions .menu_button {
+    min-width: 100px;
+    flex: 1;
+}
+
+/* Button states */
+.vectors-btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+}
+
+.vectors-btn-loading {
+    position: relative;
+    color: transparent !important;
+}
+
+.vectors-btn-loading::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    margin-left: -8px;
+    margin-top: -8px;
+    border: 2px solid var(--vectors-enhanced-primary);
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: vectors-spinner 0.8s linear infinite;
+}
+
+@keyframes vectors-spinner {
+    to { transform: rotate(360deg); }
+}
+
+/* Special button styles */
+#vectors_enhanced_abort {
+    background-color: var(--vectors-enhanced-error);
+    color: white;
+}
+
+#vectors_enhanced_abort:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--vectors-enhanced-error) 80%, black);
+}
+
+/* Refresh button */
+#vectors_enhanced_refresh_chats,
+#vectors_enhanced_refresh_files,
+#vectors_enhanced_refresh_world_info {
+    width: auto !important;
+    min-width: unset !important;
+    padding: var(--vectors-spacing-xs) var(--vectors-spacing-sm);
+}
+
+/* Select all/none buttons */
+.vectors-select-buttons {
+    display: flex;
+    gap: var(--vectors-spacing-xs);
+    margin-bottom: var(--vectors-spacing-sm);
+}
+
+.vectors-select-buttons button {
+    padding: var(--vectors-spacing-xs) var(--vectors-spacing-sm);
+    font-size: 0.85em;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-sm);
+    cursor: pointer;
+}
+
+.vectors-select-buttons button:hover {
+    background: var(--vectors-enhanced-primary);
+    color: var(--SmartThemeBlurColor);
+}

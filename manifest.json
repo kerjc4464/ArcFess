@@ -1,0 +1,13 @@
+{
+  "display_name": "聊天记录超级管理器",
+  "loading_order": 5000,
+  "requires": [],
+  "optional": ["embeddings"],
+  "generate_interceptor": "vectors_rearrangeChat",
+  "js": "index.js",
+  "css": "style.css",
+  "author": "RaphllA",
+  "version": "1.2.8",
+  "homePage": "https://github.com/RaphllA/vectors-enhanced",
+  "description": "-具体更新内容查看文档"
+}

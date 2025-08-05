@@ -1,0 +1,123 @@
+/* Responsive Design and Media Queries */
+
+/* Mobile devices (max-width: 600px) */
+@media screen and (max-width: 600px) {
+    .vectors-enhanced-actions {
+        flex-direction: column;
+    }
+    
+    .vectors-enhanced-actions .menu_button {
+        width: 100%;
+    }
+    
+    .vectors-radio-group {
+        flex-direction: column;
+    }
+    
+    .vectors-inline-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .content-settings {
+        margin-left: var(--vectors-spacing-md);
+    }
+    
+    .vectors-flex-between {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--vectors-spacing-sm);
+    }
+    
+    .file-list,
+    .wi-list {
+        max-height: 150px;
+    }
+    
+    .vectors-enhanced-chat-messages {
+        height: 200px;
+    }
+}
+
+/* Tablets (max-width: 768px) */
+@media screen and (max-width: 768px) {
+    .vectors-settings-group {
+        padding: var(--vectors-spacing-sm);
+    }
+    
+    .vectors-task-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--vectors-spacing-sm);
+    }
+    
+    .vectors-task-actions {
+        align-self: flex-end;
+    }
+}
+
+/* Small screens (max-width: 1024px) */
+@media screen and (max-width: 1024px) {
+    .vectors_enhanced_settings {
+        padding: var(--vectors-spacing-xs);
+    }
+    
+    .vectors-enhanced-section {
+        margin-bottom: var(--vectors-spacing-md);
+    }
+}
+
+/* Large screens (min-width: 1200px) */
+@media screen and (min-width: 1200px) {
+    .file-list,
+    .wi-list {
+        max-height: 300px;
+    }
+    
+    .vectors-enhanced-chat-messages {
+        height: 400px;
+    }
+    
+    .vectors-task-list {
+        max-height: 400px;
+    }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    .vectors-enhanced-shadow {
+        --vectors-enhanced-shadow: rgba(0, 0, 0, 0.3);
+    }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .progress-bar-inner,
+    .vectors-task-item,
+    .vectors-task-actions button {
+        transition: none !important;
+    }
+    
+    @keyframes vectors-spinner {
+        to { transform: none; }
+    }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+    .vectors-enhanced-border {
+        --vectors-enhanced-border: currentColor;
+    }
+    
+    .vectors-input-error,
+    .vectors-input-success {
+        outline: 2px solid;
+        outline-offset: 2px;
+    }
+    
+    .vectors-task-status,
+    .tag-rule-type {
+        font-weight: bold;
+        text-decoration: underline;
+    }
+}

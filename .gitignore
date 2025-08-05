@@ -1,0 +1,51 @@
+# Node modules
+node_modules/
+
+# Build output
+dist/
+*.map
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.temp
+
+# Claude Code settings
+.claude/
+
+# Project context folders
+SuperAgent/
+.kilocode/
+SuperAgent/Context
+
+# SillyTavern specific files
+sillytavernREADME.md
+
+# Claude Code configuration
+CLAUDE.md
+
+# Documentation
+docs/
+
+# Backup and temporary folders
+vectors-enhanced-*change/
+*-backup/
+*-old/
+backup-*/
+analysis/
+

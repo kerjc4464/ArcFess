@@ -1,0 +1,94 @@
+/* Content Selection Component Styles */
+
+.content-type-section {
+    margin: var(--vectors-spacing-sm) 0;
+}
+
+.content-settings {
+    margin-left: var(--vectors-spacing-xl);
+    margin-top: var(--vectors-spacing-sm);
+    padding: var(--vectors-spacing-sm);
+    border-left: 2px solid var(--vectors-enhanced-border);
+}
+
+/* File and World Info lists */
+.file-list, 
+.wi-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-sm);
+    padding: var(--vectors-spacing-sm);
+    margin-bottom: var(--vectors-spacing-sm);
+}
+
+.file-list label,
+.wi-list label {
+    display: flex;
+    align-items: center;
+    margin: var(--vectors-spacing-xs) 0;
+    cursor: pointer;
+    padding: var(--vectors-spacing-xs);
+}
+
+.file-list label:hover,
+.wi-list label:hover {
+    background-color: var(--vectors-enhanced-secondary);
+    border-radius: var(--vectors-radius-sm);
+}
+
+/* File group headers */
+.file-group-header {
+    font-weight: bold;
+    margin-top: var(--vectors-spacing-sm);
+    margin-bottom: var(--vectors-spacing-xs);
+    color: var(--vectors-enhanced-primary);
+}
+
+.file-group-header:first-child {
+    margin-top: 0;
+}
+
+/* Chat message list */
+.vectors-enhanced-chat-messages {
+    border: 1px solid var(--vectors-enhanced-border);
+    border-radius: var(--vectors-radius-sm);
+    padding: var(--vectors-spacing-sm);
+    height: 300px;
+    overflow-y: auto;
+    margin-bottom: var(--vectors-spacing-sm);
+}
+
+.vectors-enhanced-chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+
+.vectors-enhanced-chat-messages::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.vectors-enhanced-chat-messages::-webkit-scrollbar-thumb {
+    background-color: var(--vectors-enhanced-secondary);
+    border-radius: var(--vectors-radius-sm);
+}
+
+.vectors-enhanced-chat-messages label {
+    display: block;
+    margin-bottom: var(--vectors-spacing-sm);
+    padding: var(--vectors-spacing-sm);
+    background: var(--vectors-enhanced-secondary);
+    border-radius: var(--vectors-radius-sm);
+    cursor: pointer;
+}
+
+.vectors-enhanced-chat-messages label:hover {
+    background: var(--vectors-enhanced-primary);
+    color: var(--SmartThemeBlurColor);
+}
+
+/* Selection counts */
+.selection-count {
+    font-size: 0.9em;
+    color: var(--vectors-enhanced-primary);
+    margin-left: var(--vectors-spacing-sm);
+}

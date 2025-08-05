@@ -1,0 +1,779 @@
+/* Vector Storage Enhanced Extension Styles */
+
+/* External Tasks Styles */
+.external-tasks-container {
+    margin-top: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.external-task-item {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.external-task-item .task-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.external-task-item .task-name {
+    font-weight: bold;
+    flex: 1;
+}
+
+.external-task-item .task-status {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.external-task-item .status-pending { background: #f0ad4e; color: white; }
+.external-task-item .status-queued { background: #5bc0de; color: white; }
+.external-task-item .status-running { background: #337ab7; color: white; }
+.external-task-item .status-completed { background: #5cb85c; color: white; }
+.external-task-item .status-failed { background: #d9534f; color: white; }
+.external-task-item .status-cancelled { background: #868686; color: white; }
+
+.external-task-item .task-info {
+    font-size: 0.9em;
+    color: var(--SmartThemeEmColor);
+    margin-bottom: 5px;
+}
+
+.external-task-item .task-info small {
+    margin-right: 10px;
+}
+
+/* Import button styles */
+#vectors_enhanced_import_external_task {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s ease;
+}
+
+#vectors_enhanced_import_external_task:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+#vectors_enhanced_import_external_task:active {
+    transform: translateY(0);
+}
+
+#vectors_enhanced_import_external_task i {
+    font-size: 1em;
+}
+
+.external-task-item .task-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.external-task-item .task-actions button {
+    font-size: 0.9em;
+    padding: 5px 10px;
+}
+
+.no-external-tasks {
+    text-align: center;
+    color: var(--SmartThemeEmColor);
+    padding: 20px;
+}
+
+/* Import Dialog Styles - 使用默认样式 */
+.external-task-import-dialog .dialog-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.external-task-import-dialog #source-tasks-list {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 10px;
+    margin-top: 5px;
+}
+
+.external-task-import-dialog .task-select-item {
+    margin-bottom: 8px;
+}
+
+.external-task-import-dialog .task-select-item label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.external-task-import-dialog .task-checkbox {
+    margin-right: 8px;
+}
+
+
+/* Task Details Dialog */
+.external-task-details {
+    padding: 20px;
+}
+
+.external-task-details h3 {
+    margin-bottom: 15px;
+}
+
+.external-task-details .detail-row {
+    margin-bottom: 10px;
+}
+
+.external-task-details .detail-row strong {
+    display: inline-block;
+    width: 120px;
+}
+
+.external-task-details pre {
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 10px;
+    margin-top: 5px;
+    overflow-x: auto;
+}
+
+.vectors_enhanced_settings {
+    padding: 0.5rem;
+}
+
+.vectors-enhanced-section {
+    margin-bottom: 1rem;
+}
+
+.vectors-enhanced-section h3 {
+    margin-bottom: 0.75rem;
+    color: var(--SmartThemeBodyColor);
+}
+
+.vectors-enhanced-section h4 {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+}
+
+/* Content selection styles */
+.content-type-section {
+    margin: 0.5rem 0;
+}
+
+.content-settings {
+    margin-left: 1.5rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    border-left: 2px solid var(--SmartThemeBorderColor);
+}
+
+.file-list, .wi-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.file-list label {
+    display: flex;
+    align-items: center;
+    margin: 0.25rem 0;
+    cursor: pointer;
+    padding: 0.25rem;
+}
+
+/* Tag suggestion styles */
+#vectors_enhanced_tag_suggestions {
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+#vectors_enhanced_tag_list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.tag-suggestion-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.8em !important;
+    padding: 2px 6px !important;
+    margin: 1px;
+    background: var(--SmartThemeQuoteColor) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 3px !important;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tag-suggestion-btn:hover {
+    background: var(--SmartThemeEmColor) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    max-width: none;
+    overflow: visible;
+    z-index: 10;
+    position: relative;
+}
+
+#vectors_enhanced_clear_suggestions {
+    padding: 2px 6px;
+    font-size: 0.8em;
+    margin-left: 0.5rem;
+}
+
+.tag-scan-stats {
+    font-family: monospace;
+    font-size: 0.75em;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.file-list label:hover {
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+.file-list label input {
+    flex-shrink: 0;
+    margin-right: 0.5rem;
+}
+
+.file-list label span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wi-world-group {
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    padding: 0.5rem;
+}
+
+.wi-world-header {
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.wi-world-name {
+    font-weight: bold;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.wi-list .wi-entry {
+    margin-left: 1.5rem;
+    font-size: 0.9em;
+    padding: 0.25rem;
+}
+
+.wi-list .wi-entry:hover {
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+.wi-list .wi-entry input {
+    flex-shrink: 0;
+    margin-right: 0.5rem;
+}
+
+.wi-list .wi-entry span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Action buttons */
+.vectors-enhanced-actions {
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.vectors-enhanced-actions button {
+    flex: 1;
+    max-width: 150px;
+}
+
+/* Status messages */
+.vectors-enhanced-status {
+    text-align: center;
+    padding: 0.5rem;
+    border-radius: 4px;
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+.vectors-enhanced-status.success {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.vectors-enhanced-status.error {
+    color: var(--SmartThemeErrorColor);
+}
+
+/* Progress bar styles */
+.vectors-enhanced-progress {
+    text-align: center;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 20px;
+    background-color: var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.progress-bar-inner {
+    height: 100%;
+    background-color: var(--SmartThemeQuoteColor);
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    font-size: 0.9em;
+    color: var(--SmartThemeBodyColor);
+}
+
+/* Preview modal styles */
+.vector-preview {
+    height: 70vh;
+    max-height: 800px;
+    min-height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+.preview-header {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-bottom: 1rem;
+    text-align: center;
+    color: var(--SmartThemeBodyColor);
+    flex-shrink: 0;
+}
+
+.preview-sections {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    flex: 1;
+    min-height: 0;
+}
+
+.preview-section {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+}
+
+.preview-section-title {
+    background-color: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeBotMesTextColor, white);
+    padding: 0.75rem;
+    font-weight: bold;
+    font-size: 1.1em;
+    flex-shrink: 0;
+    border-radius: 8px 8px 0 0; /* 顶部圆角 */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.preview-section-content {
+    flex: 1;
+    overflow-y: auto !important;
+    overflow-x: hidden;
+    padding: 1rem;
+    min-height: 0;
+    height: 100%; /* 占满剩余高度 */
+    position: relative;
+    border-radius: 0 0 8px 8px; /* 底部圆角 */
+}
+
+/* 强制聊天消息滚动 */
+.preview-section-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.preview-section-content::-webkit-scrollbar-track {
+    background: var(--SmartThemeBorderColor);
+    border-radius: 4px;
+}
+
+.preview-section-content::-webkit-scrollbar-thumb {
+    background: var(--SmartThemeQuoteColor);
+    border-radius: 4px;
+}
+
+.preview-section-content::-webkit-scrollbar-thumb:hover {
+    background: var(--SmartThemeBodyColor);
+}
+
+.preview-item {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background-color: var(--SmartThemeBlurTintColor);
+    border-radius: 4px;
+}
+
+.preview-empty {
+    color: var(--SmartThemeEmColor);
+    font-style: italic;
+    text-align: center;
+    padding: 2rem;
+}
+
+.preview-world-group {
+    margin-bottom: 1rem;
+}
+
+.preview-world-name {
+    font-weight: bold;
+    color: var(--SmartThemeQuoteColor);
+    margin-bottom: 0.5rem;
+}
+
+.preview-world-entry {
+    padding-left: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.preview-chat-message {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background-color: var(--SmartThemeBlurTintColor);
+    border-radius: 6px;
+}
+
+.preview-chat-header {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.preview-chat-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.5;
+    text-align: left;
+}
+
+/* Responsive preview for smaller screens */
+@media (max-width: 1200px) {
+    .preview-sections {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(3, 1fr);
+    }
+}
+
+/* Radio group adjustments */
+.vectors_enhanced_settings .radio_group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.vectors_enhanced_settings .radio_group label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .content-settings {
+        margin-left: 0.5rem;
+    }
+
+    .vectors-enhanced-actions {
+        flex-direction: column;
+    }
+
+    .vectors-enhanced-actions button {
+        max-width: 100%;
+    }
+}
+
+/* Refresh button width fix */
+#vectors_enhanced_files_refresh,
+#vectors_enhanced_wi_refresh {
+    width: 100%;
+    white-space: nowrap;
+}
+
+/* File group headers */
+.file-group-header {
+    font-weight: bold;
+    color: var(--SmartThemeBodyColor);
+    margin-bottom: 0.25rem;
+}
+
+/* Utility classes */
+.m-t-0-5 { margin-top: 0.5rem; }
+.m-b-0-5 { margin-bottom: 0.5rem; }
+.m-t-1 { margin-top: 1rem; }
+.m-b-1 { margin-bottom: 1rem; }
+.margin-bottom-10px { margin-bottom: 10px; }
+
+.text-overflow-ellipsis {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Task list styles */
+.task-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 10px 0;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    padding: 0.5rem;
+}
+
+.vector-enhanced-task-item {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    margin-bottom: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 5px;
+    gap: 10px;
+    min-height: 40px;
+}
+
+.vector-enhanced-task-item:last-child {
+    margin-bottom: 0;
+}
+
+.vector-enhanced-task-item label {
+    flex: 1;
+    margin: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+    min-width: 0; /* 允许收缩 */
+}
+
+.vector-enhanced-task-item .button-group {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0; /* 按钮组不收缩 */
+}
+
+.vector-enhanced-task-item button {
+    padding: 6px 10px;
+    font-size: 0.9em;
+    flex-shrink: 0;
+    min-width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.vector-enhanced-task-item small {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.85em;
+}
+/* Custom UI Tweaks for titles and info text */
+.vectors-enhanced-subsection-title {
+    font-size: 1.15em;
+    font-weight: bold;
+    color: var(--SmartThemeBodyColor);
+}
+
+#vectors_enhanced_hidden_info .text-muted strong {
+    font-size: 0.85em;
+    font-weight: normal;
+    color: var(--SmartThemeEmColor);
+}
+
+#vectors_enhanced_rules_editor .text-muted {
+    font-size: 0.85em;
+    color: var(--SmartThemeEmColor);
+}
+
+/* Fix inconsistent font sizes for checkbox labels and tooltips */
+.checkbox_label.m-t-0-5 span {
+    font-size: 0.9em;
+}
+
+/* Tag preset management styles */
+.tag-preset-management {
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+    padding: 0.5rem;
+}
+
+.tag-preset-management .flex-container {
+    gap: 0.5rem;
+}
+
+#vectors_enhanced_tag_preset_selector {
+    min-width: 150px;
+}
+
+#vectors_enhanced_tag_preset_save {
+    white-space: nowrap;
+}
+
+/* External Task Styles - 外挂任务样式（旧版已移除，使用新的布局样式） */
+
+/* 任务列表项统一高度 */
+.vector-enhanced-task-item .checkbox_label {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    margin: 2px 0;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    width: 100%;
+}
+
+/* 任务内容区域 */
+.vector-enhanced-task-item .checkbox_label .task-content {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0; /* 允许收缩 */
+}
+
+/* 任务名称样式 - 支持省略号 */
+.vector-enhanced-task-item .checkbox_label .task-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0; /* 允许收缩 */
+    margin-right: 4px;
+}
+
+/* 外挂任务标记 - 固定宽度，不被压缩 */
+.vector-enhanced-task-item .checkbox_label .external-task-badge {
+    flex-shrink: 0;
+    width: 1.2em;
+    text-align: center;
+    opacity: 0.8;
+    font-size: 0.9em;
+}
+
+/* 任务信息（小字部分） */
+.vector-enhanced-task-item .checkbox_label .task-info {
+    display: block;
+    font-size: 0.85em;
+    color: var(--SmartThemeEmColor);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 外挂任务样式 - 与普通任务保持一致 */
+.vector-enhanced-task-item .checkbox_label.external-task {
+    /* 与普通任务完全一致，无特殊样式 */
+}
+
+/* 孤儿任务稍微降低透明度 */
+.vector-enhanced-task-item .checkbox_label.external-task.orphaned {
+    opacity: 0.7;
+}
+
+/* 孤儿任务文本样式 */
+.vector-enhanced-task-item .orphaned-task {
+    color: var(--SmartThemeQuoteColor);
+    text-decoration: line-through;
+}
+
+/* 孤儿任务的外挂标记 */
+.vector-enhanced-task-item .checkbox_label.external-task.orphaned .external-task-badge {
+    filter: grayscale(100%);
+}
+
+/* 禁用的外挂任务 */
+.vector-enhanced-task-item .checkbox_label.external-task input[type="checkbox"]:not(:checked) ~ .task-content {
+    opacity: 0.7;
+}
+
+/* 导入外挂任务按钮样式 */
+#vectors_enhanced_import_external_task {
+    padding: 8px 16px;
+    font-size: 0.9em;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+#vectors_enhanced_import_external_task:hover {
+    background: var(--SmartThemeEmColor);
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+#vectors_enhanced_import_external_task i {
+    font-size: 0.9em;
+}
+
+/* 查询存储地址按钮样式 */
+#vectors_enhanced_query_storage_path {
+    padding: 8px 16px;
+    font-size: 0.9em;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+#vectors_enhanced_query_storage_path:hover {
+    background: var(--SmartThemeEmColor);
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+#vectors_enhanced_query_storage_path i {
+    font-size: 0.9em;
+}
+
+/* Master switch control - 总开关控制 */
+/* 当总开关关闭时，隐藏除了总开关区域外的所有内容 */
+#vectors_enhanced_container:has(#vectors_enhanced_master_enabled:not(:checked)) .vectors-enhanced-section:not(:first-child) {
+    display: none !important;
+}

@@ -1,0 +1,221 @@
+<div id="vectors-debug-panel" class="vectors-enhanced-section">
+  <h3 style="color: var(--SmartThemeQuoteColor);">🔧 调试工具面板</h3>
+  
+  <!-- 状态分析工具 -->
+  <details class="debug-section" data-section="state">
+    <summary><strong>📊 状态分析</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_analyze_vector_status" class="menu_button menu_button_icon" title="分析向量状态">
+        <i class="fa-solid fa-chart-line"></i>
+        <span>向量状态</span>
+      </button>
+      <button id="debug_analyze_content_selection" class="menu_button menu_button_icon" title="分析内容选择状态">
+        <i class="fa-solid fa-list-check"></i>
+        <span>内容选择</span>
+      </button>
+      <button id="debug_analyze_hidden_messages" class="menu_button menu_button_icon" title="分析隐藏消息状态">
+        <i class="fa-solid fa-eye-slash"></i>
+        <span>隐藏消息</span>
+      </button>
+      <button id="debug_check_system_integrity" class="menu_button menu_button_icon" title="检查系统完整性">
+        <i class="fa-solid fa-shield-check"></i>
+        <span>系统完整性</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 同步检查工具 -->
+  <details class="debug-section" data-section="sync">
+    <summary><strong>🔄 同步检查</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_analyze_ui_sync" class="menu_button menu_button_icon" title="检查UI与设置同步">
+        <i class="fa-solid fa-sync"></i>
+        <span>UI同步</span>
+      </button>
+      <button id="debug_analyze_world_info_deep" class="menu_button menu_button_icon" title="深度分析世界信息">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <span>世界信息深度</span>
+      </button>
+      <button id="debug_find_sync_discrepancies" class="menu_button menu_button_icon" title="查找所有同步差异">
+        <i class="fa-solid fa-search"></i>
+        <span>同步差异</span>
+      </button>
+      <button id="debug_generate_sync_report" class="menu_button menu_button_icon" title="生成同步报告">
+        <i class="fa-solid fa-file-alt"></i>
+        <span>同步报告</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 数据分析工具 -->
+  <details class="debug-section" data-section="data">
+    <summary><strong>📋 数据分析</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_analyze_file_overlap" class="menu_button menu_button_icon" title="分析文件重复">
+        <i class="fa-solid fa-files"></i>
+        <span>文件重复</span>
+      </button>
+      <button id="debug_analyze_task_overlap" class="menu_button menu_button_icon" title="分析任务重复">
+        <i class="fa-solid fa-tasks"></i>
+        <span>任务重复</span>
+      </button>
+      <button id="debug_validate_data_integrity" class="menu_button menu_button_icon" title="验证数据完整性">
+        <i class="fa-solid fa-check-circle"></i>
+        <span>数据完整性</span>
+      </button>
+      <button id="debug_generate_statistics" class="menu_button menu_button_icon" title="生成统计信息">
+        <i class="fa-solid fa-chart-bar"></i>
+        <span>统计信息</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 清理工具 -->
+  <details class="debug-section" data-section="cleanup">
+    <summary><strong>🧹 清理工具</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_clear_world_info" class="menu_button menu_button_icon" title="清空世界信息选择">
+        <i class="fa-solid fa-trash"></i>
+        <span>清空世界信息</span>
+      </button>
+      <button id="debug_clear_file_selections" class="menu_button menu_button_icon" title="清空文件选择">
+        <i class="fa-solid fa-file-times"></i>
+        <span>清空文件</span>
+      </button>
+      <button id="debug_reset_chat_settings" class="menu_button menu_button_icon" title="重置聊天设置">
+        <i class="fa-solid fa-undo"></i>
+        <span>重置聊天</span>
+      </button>
+      <button id="debug_run_core_cleanup" class="menu_button menu_button_icon" title="运行核心清理">
+        <i class="fa-solid fa-broom"></i>
+        <span>核心清理</span>
+      </button>
+    </div>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_bulk_cleanup" class="menu_button menu_button_icon" title="批量清理">
+        <i class="fa-solid fa-magic"></i>
+        <span>批量清理</span>
+      </button>
+      <button id="debug_cleanup_cache" class="menu_button menu_button_icon" title="清理缓存">
+        <i class="fa-solid fa-database"></i>
+        <span>清理缓存</span>
+      </button>
+      <button id="debug_purge_vector_data" class="menu_button menu_button_icon" title="清除向量数据">
+        <i class="fa-solid fa-trash-alt"></i>
+        <span>清除向量</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 检查工具 -->
+  <details class="debug-section" data-section="inspect">
+    <summary><strong>🔍 检查工具</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_inspect_hidden_messages" class="menu_button menu_button_icon" title="检查隐藏消息">
+        <i class="fa-solid fa-eye-slash"></i>
+        <span>隐藏消息</span>
+      </button>
+      <button id="debug_inspect_system_status" class="menu_button menu_button_icon" title="检查系统状态">
+        <i class="fa-solid fa-heartbeat"></i>
+        <span>系统状态</span>
+      </button>
+      <button id="debug_inspect_vector_integrity" class="menu_button menu_button_icon" title="检查向量数据完整性">
+        <i class="fa-solid fa-vector-square"></i>
+        <span>向量完整性</span>
+      </button>
+      <button id="debug_inspect_file_access" class="menu_button menu_button_icon" title="检查文件访问权限">
+        <i class="fa-solid fa-file-shield"></i>
+        <span>文件访问</span>
+      </button>
+    </div>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_inspect_world_info_availability" class="menu_button menu_button_icon" title="检查世界信息可用性">
+        <i class="fa-solid fa-globe-check"></i>
+        <span>世界信息可用性</span>
+      </button>
+      <button id="debug_generate_comprehensive_report" class="menu_button menu_button_icon" title="生成综合检查报告">
+        <i class="fa-solid fa-file-medical"></i>
+        <span>综合报告</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 测试工具 -->
+  <details class="debug-section" data-section="test">
+    <summary><strong>🧪 测试工具</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_test_slash_commands" class="menu_button menu_button_icon" title="测试斜杠命令">
+        <i class="fa-solid fa-terminal"></i>
+        <span>斜杠命令</span>
+      </button>
+      <button id="debug_test_functional_integrity" class="menu_button menu_button_icon" title="测试功能完整性">
+        <i class="fa-solid fa-cogs"></i>
+        <span>功能完整性</span>
+      </button>
+      <button id="debug_test_performance_stress" class="menu_button menu_button_icon" title="性能压力测试">
+        <i class="fa-solid fa-tachometer-alt"></i>
+        <span>性能压力</span>
+      </button>
+      <button id="debug_generate_test_report" class="menu_button menu_button_icon" title="生成测试报告">
+        <i class="fa-solid fa-clipboard-check"></i>
+        <span>测试报告</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 高级工具 -->
+  <details class="debug-section" data-section="advanced">
+    <summary><strong>⚙️ 高级工具</strong></summary>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_analyze_performance_metrics" class="menu_button menu_button_icon" title="分析性能指标">
+        <i class="fa-solid fa-speedometer"></i>
+        <span>性能指标</span>
+      </button>
+      <button id="debug_analyze_usage_patterns" class="menu_button menu_button_icon" title="分析使用模式">
+        <i class="fa-solid fa-chart-pie"></i>
+        <span>使用模式</span>
+      </button>
+      <button id="debug_analyze_data_flow" class="menu_button menu_button_icon" title="分析数据流">
+        <i class="fa-solid fa-project-diagram"></i>
+        <span>数据流</span>
+      </button>
+      <button id="debug_create_settings_backup" class="menu_button menu_button_icon" title="创建设置备份">
+        <i class="fa-solid fa-download"></i>
+        <span>设置备份</span>
+      </button>
+    </div>
+  </details>
+  
+  <!-- 调试控制 -->
+  <div class="flex-container m-t-1" style="border-top: 1px dashed var(--SmartThemeQuoteColor); padding-top: 0.5rem;">
+    <button id="debug_toggle_mode" class="menu_button menu_button_icon" title="切换调试模式">
+      <i class="fa-solid fa-power-off"></i>
+      <span>切换调试模式</span>
+    </button>
+    <button id="debug_show_status" class="menu_button menu_button_icon" title="显示调试状态">
+      <i class="fa-solid fa-info-circle"></i>
+      <span>调试状态</span>
+    </button>
+    <button id="debug_refresh_ui" class="menu_button menu_button_icon" title="刷新调试界面">
+      <i class="fa-solid fa-refresh"></i>
+      <span>刷新界面</span>
+    </button>
+  </div>
+  
+  <!-- 调试信息显示区域 -->
+  <div id="debug-info-panel" class="m-t-1" style="display: none;">
+    <div style="border: 1px solid var(--SmartThemeQuoteColor); border-radius: 4px; padding: 0.5rem; font-family: monospace; font-size: 0.8em; max-height: 200px; overflow-y: auto;">
+      <div id="debug-info-content">调试信息将显示在这里...</div>
+    </div>
+    <div class="flex-container m-t-0-5">
+      <button id="debug_clear_info" class="menu_button menu_button_icon" title="清空调试信息">
+        <i class="fa-solid fa-eraser"></i>
+        <span>清空信息</span>
+      </button>
+      <button id="debug_copy_info" class="menu_button menu_button_icon" title="复制调试信息">
+        <i class="fa-solid fa-copy"></i>
+        <span>复制信息</span>
+      </button>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,51 @@
+/**
+ * Vectors Enhanced - Main Stylesheet
+ * 
+ * This file imports all modular CSS components in the correct order.
+ * The modular architecture allows for better maintainability and organization.
+ */
+
+/* Base styles and CSS variables */
+@import './base.css';
+
+/* Component-specific styles */
+@import './content-selection.css';
+@import './buttons.css';
+@import './forms.css';
+@import './progress.css';
+@import './preview.css';
+@import './tasks.css';
+@import './tags.css';
+
+/* Responsive design */
+@import './responsive.css';
+
+/* Additional utility classes and overrides */
+
+/* Ensure proper z-index layering */
+.tag-suggestion-box {
+    z-index: 1000;
+}
+
+.vectors-preview-panel {
+    z-index: 999;
+}
+
+.vectors-enhanced-progress,
+.vectors-enhanced-status {
+    z-index: 998;
+}
+
+/* Print styles */
+@media print {
+    .vectors-enhanced-actions,
+    .vectors-enhanced-progress,
+    .vectors-enhanced-status,
+    .vectors-select-buttons {
+        display: none !important;
+    }
+    
+    .vectors-preview-item {
+        page-break-inside: avoid;
+    }
+}

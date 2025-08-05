@@ -1,0 +1,407 @@
+/**
+ * Vectors Enhanced - Modular Component Styles
+ * Extracted from inline styles in settings.html for better maintainability
+ */
+
+/* === Layout and Container Styles === */
+.vectors-enhanced-section {
+  margin-bottom: 1rem;
+}
+
+.vectors-enhanced-header {
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--SmartThemeQuoteColor);
+}
+
+.vectors-enhanced-title {
+  font-weight: bold;
+  color: var(--SmartThemeQuoteColor);
+}
+
+.vectors-enhanced-subtitle {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--SmartThemeEmColor);
+}
+
+.vectors-enhanced-subsection-title {
+  font-weight: 600;
+  color: var(--SmartThemeQuoteColor);
+}
+
+/* === Settings Panel Styles === */
+.vectors-settings-hidden {
+  display: none !important;
+}
+
+.vectors-settings-visible {
+  display: block !important;
+}
+
+.vectors-settings-flex {
+  display: flex !important;
+}
+
+/* === Source-specific Settings === */
+.vectors-source-settings {
+  display: none;
+}
+
+.vectors-source-settings.active {
+  display: flex;
+}
+
+.vectors-vllm-settings {
+  flex-direction: column;
+}
+
+.vectors-ollama-settings {
+  flex-direction: column;
+}
+
+/* === Notification Settings === */
+.vectors-notification-details {
+  margin-left: 1.5rem;
+  display: none;
+}
+
+.vectors-notification-details.visible {
+  display: block;
+}
+
+/* === Content Selection Styles === */
+.content-type-section {
+  margin-bottom: 1rem;
+}
+
+.content-settings {
+  display: none;
+  margin-top: 0.5rem;
+  padding-left: 1rem;
+  border-left: 2px solid var(--SmartThemeBorderColor);
+}
+
+.content-settings.active {
+  display: block;
+}
+
+/* === Chat Settings Specific === */
+.vectors-chat-settings {
+  display: none;
+}
+
+.vectors-chat-settings.active {
+  display: block;
+}
+
+.vectors-hidden-message-section {
+  border-top: 1px dashed var(--SmartThemeQuoteColor);
+  padding-top: 0.5rem;
+  margin-top: 1rem;
+}
+
+.vectors-hidden-info {
+  margin-top: 0.5rem;
+  display: none;
+}
+
+.vectors-hidden-info.visible {
+  display: block;
+}
+
+/* === Tag System Styles === */
+.vectors-tag-examples-btn {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8em;
+}
+
+.vectors-tag-actions {
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.vectors-tag-suggestions {
+  margin-top: 0.5rem;
+  display: none;
+}
+
+.vectors-tag-suggestions.visible {
+  display: block;
+}
+
+/* === Input Field Styles === */
+.vectors-depth-input {
+  width: 60px;
+}
+
+.vectors-range-input {
+  min-width: 80px;
+}
+
+/* === File and World Info Lists === */
+.file-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* File group header with select all */
+.file-group-header {
+  font-weight: bold;
+  color: var(--SmartThemeQuoteColor);
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.file-group-header .checkbox_label {
+  font-weight: bold;
+}
+
+.file-group-select-all {
+  margin-right: 0.5rem;
+}
+
+.wi-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* World Info Group Styles */
+.wi-world-group {
+  margin-bottom: 10px;
+  padding: 5px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 4px;
+}
+
+/* World info source categories */
+.wi-source-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--SmartThemeQuoteColor);
+  margin-bottom: 10px;
+}
+
+.wi-source-header:not(:first-child) {
+  margin-top: 20px;
+}
+
+.task-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 4px;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* === Action Buttons and Progress === */
+.vectors-enhanced-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.vectors-enhanced-progress {
+  margin-top: 1rem;
+  display: none;
+}
+
+.vectors-enhanced-progress.active {
+  display: block;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 20px;
+  background-color: var(--SmartThemeFadedText);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar-inner {
+  height: 100%;
+  background-color: var(--SmartThemeQuoteColor);
+  transition: width 0.3s ease;
+  border-radius: 10px;
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 0.9em;
+  color: var(--SmartThemeBodyColor);
+}
+
+.vectors-enhanced-status {
+  margin-top: 1rem;
+  display: none;
+}
+
+.vectors-enhanced-status.active {
+  display: block;
+}
+
+/* === Button States === */
+.vectors-btn-hidden {
+  display: none !important;
+}
+
+.vectors-btn-visible {
+  display: inline-flex !important;
+}
+
+.vectors-btn-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.vectors-btn-loading {
+  position: relative;
+}
+
+.vectors-btn-loading::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: auto;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: vectors-spin 1s linear infinite;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+@keyframes vectors-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* === Debug Section (commented out by default) === */
+.vectors-enhanced-debug {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px dashed var(--SmartThemeFadedText);
+  border-radius: 4px;
+  background-color: var(--SmartThemeBlurTintColor);
+  display: none; /* Hidden by default */
+}
+
+.vectors-enhanced-debug.visible {
+  display: block;
+}
+
+.vectors-debug-title {
+  margin-bottom: 0.5rem;
+  color: var(--SmartThemeQuoteColor);
+  font-weight: 600;
+}
+
+/* === Responsive Design === */
+@media (max-width: 768px) {
+  .vectors-enhanced-actions {
+    flex-direction: column;
+  }
+  
+  .vectors-enhanced-actions .menu_button {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .file-list,
+  .wi-list,
+  .task-list {
+    max-height: 150px;
+  }
+}
+
+/* === Accessibility Improvements === */
+.vectors-enhanced-section:focus-within {
+  outline: 2px solid var(--SmartThemeQuoteColor);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.content-settings[aria-expanded="true"] {
+  display: block;
+}
+
+.content-settings[aria-expanded="false"] {
+  display: none;
+}
+
+/* === Animation and Transitions === */
+.content-settings {
+  transition: opacity 0.2s ease, max-height 0.3s ease;
+}
+
+.vectors-tag-suggestions {
+  transition: opacity 0.2s ease;
+}
+
+.vectors-enhanced-progress .progress-bar-inner {
+  transition: width 0.3s ease;
+}
+
+/* === Form Validation States === */
+.vectors-input-error {
+  border-color: var(--SmartThemeRedColor, #ff4444) !important;
+  box-shadow: 0 0 0 2px rgba(255, 68, 68, 0.2);
+}
+
+.vectors-input-success {
+  border-color: var(--SmartThemeGreenColor, #44ff44) !important;
+  box-shadow: 0 0 0 2px rgba(68, 255, 68, 0.2);
+}
+
+.vectors-validation-message {
+  font-size: 0.8em;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.vectors-validation-error {
+  color: var(--SmartThemeRedColor, #ff4444);
+  background-color: rgba(255, 68, 68, 0.1);
+  border: 1px solid rgba(255, 68, 68, 0.3);
+}
+
+.vectors-validation-success {
+  color: var(--SmartThemeGreenColor, #44ff44);
+  background-color: rgba(68, 255, 68, 0.1);
+  border: 1px solid rgba(68, 255, 68, 0.3);
+}
+
+/* === Theme Integration === */
+[data-theme="dark"] .vectors-enhanced-section {
+  border-color: var(--SmartThemeFadedText);
+}
+
+[data-theme="light"] .vectors-enhanced-section {
+  border-color: var(--SmartThemeBorderColor);
+}
+
+/* === Print Styles === */
+@media print {
+  .vectors-enhanced-debug,
+  .vectors-enhanced-actions,
+  .vectors-enhanced-progress,
+  .vectors-enhanced-status {
+    display: none !important;
+  }
+}
