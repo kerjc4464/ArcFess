@@ -1,185 +1,78 @@
-# Vectors Enhanced - SillyTavern 高级向量化扩展
+# ArcFess
 
+<div align="center">
 
-Vectors Enhanced 是 SillyTavern 的向量化扩展插件，提语义搜索、智能记忆管理和内容处理功能。
+![SillyTavern Plugin](https://img.shields.io/badge/Frontend-SillyTavern_Plugin-blue?style=for-the-badge)
+![Python Backend](https://img.shields.io/badge/Backend-Python_Flask-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg?style=for-the-badge)
 
-discord社区链接：https://ptb.discord.com/channels/1134557553011998840/1390957251023343636
-详细使用教程：https://docs.google.com/document/d/1Gc-xWEKApKtfhzxwuG9XeBEio8zah8yurpPQzWGvqo4/edit?usp=sharing
+**为“深层情感陪伴”与“超长上下文”设计的个人记忆引擎方案**
 
+<font color="#808080">我最伟大的作品。</font>
 
-### 1.  多引擎向量化系统
-- **6种向量化引擎支持**：
-  - Transformers.js - 浏览器本地运行
-  - Ollama - 本地模型服务器
-  - vLLM - 高性能推理引擎
-  - WebLLM - WebGPU加速
-  - OpenAI - 云端嵌入API
-  - Cohere - 专业向量化服务
-- **智能批量处理**：自动优化批次大小，提升处理效率
-- **去重机制**：文本级、任务级、文件级三重去重
-- **两阶段架构**：数据准备与向量化分离，提高灵活性
+</div>
 
-### 2.  记忆管理系统
-- **AI智能总结**：
-  - 支持 OpenAI 兼容 API 和 Google Gemini API
-  - 自动生成对话摘要和关键信息提取
-- **世界书集成**：
-  - 自动创建 chat lore 绑定的世界书条目
-  - 记忆内容与角色世界观无缝融合
-- **自动化处理**：
-  - 每N层楼自动触发总结
-  - 支持隐藏已总结楼层，保持界面整洁
-  - 防并发机制确保稳定运行
+---
 
-### 3.  外挂任务系统
-- **跨聊天共享**：通过引用机制避免数据重复
-- **循环引用保护**：智能检测并防止A引用B，B又引用A的情况
-- **智能解析**：自动提取角色名、格式化显示、性能优化
-- **孤儿任务处理**：源聊天删除后自动标记并处理
+## 📝 项目定位 (About This Project)
 
-### 4.  内容注入系统
-- **语义匹配**：基于相似度的智能内容检索
-- **灵活配置**：
-  - 多种注入位置（系统提示、角色描述后、聊天历史等）
-  - 可调节的注入深度和优先级
-- **标签触发**：支持复杂的包含/排除/正则表达式规则
+本项目起源于 [RaphllA/vectors-enhanced](https://github.com/RaphllA/vectors-enhanced) 的前端架构。经过一段时间的个人使用和迭代，目前已经发展成一个包含 Python 后端服务器的独立记忆检索系统。
 
-### 5. 🏷️ 高级标签提取
-- **直观UI设计**：无需编写复杂命令，通过图形界面配置规则
-- **三种规则类型**：
-  - 包含规则：提取匹配标签的内容
-  - 排除规则：预先移除不需要的内容
-  - 正则表达式：高级模式匹配和提取
-- **智能处理流程**：固定的"先排除，后提取"顺序，确保结果一致性
+需要坦诚的是，以目前的眼光来看，传统的向量化技术在易用性和极致准确度上，可能已经不再具有绝对的领先优势。但本项目的初衷，始终是服务于**极长周期的角色扮演（RP）**与**深层的情感连接记忆**。如果您也有类似处理极其庞大、跨度极长的上下文需求，希望它能为您提供一些参考。
 
-## 🏗️ 技术架构
+## ⚙️ 架构简述 (Architecture)
 
-### 分层设计
-```
-应用层 (Application Layer)
-├── 业务逻辑协调
-├── 任务管理
-└── 工作流控制
+区别于繁杂的理论框架，本系统的结构非常直接，分为前端 UI 交互与独立后端两部分：
 
-核心层 (Core Layer)
-├── 实体定义 (Content, Vector, Task)
-├── 提取器系统 (ChatExtractor, FileExtractor, WorldInfoExtractor)
-├── 处理管道 (VectorizationAdapter, StorageAdapter)
-└── 查询系统 (EnhancedQuerySystem)
+1. **Frontend (SillyTavern Plugin)**：负责在 UI 层面的参数控制、事件触发与最终记忆的拼装注入。
+2. **Backend (ArcFess Server)**：独立的高性能 Python FastAPI 服务器 (`vector_server.py`)，专门承载沉重的数据库读写与检索压力。底层采用 **SQLite 结构化存储 + FAISS 高效检索** 双轨架构。内置高性能的后端数据库管理，**理论上可以支持百万条高维向量的数据库检索**。
+   * 注意：所有的记忆数据将存储在后端的 `ArcFess` 文件夹内的 `vectors.db` 中。
 
-UI层 (UI Layer)
-├── 15+ 独立组件
-├── 状态管理 (StateManager)
-├── 事件系统 (EventManager)
-└── 响应式设计
+---
 
-基础设施层 (Infrastructure Layer)
-├── 存储适配 (StorageAdapter)
-├── API封装 (VectorizationAdapter)
-├── 事件总线 (EventBus)
-└── 配置管理 (ConfigManager)
-```
+## 💡 核心功能特性 (Key Features)
 
-### 设计模式应用
-- **工厂模式**：TaskFactory、ProcessorFactory 处理对象创建
-- **适配器模式**：统一不同向量化引擎和存储后端的接口
-- **观察者模式**：EventBus 实现组件间松耦合通信
-- **策略模式**：动态切换不同的向量化引擎和处理策略
+### 1. 理性思考前置分支：Egos (Thought 引擎)
+除了常规的检索外，Egos会在最终生成回复前，尝试进行一些简单的逻辑推理（如当前时间、地点、语境氛围），并以此为依据去精准调取过去的记忆。
 
-### 性能优化
-- **批量处理**：智能分批，减少API调用次数
-- **缓存机制**：hashCache 避免重复计算
-- **延迟加载**：外挂任务仅在需要时解析
-- **事件防抖**：高频操作优化，提升UI响应性
+### 2. 多轨融合检索 (Multi-Track Retrieval)
+系统目前采用多轨通道进行检索互补：
+*   **Track 1: Egos 理性检索** - 由前置思考引擎提取的关键节点，决定了记忆的上下文准度。
+*   **Track 2: FAISS 语义检索** - 常规的向量语义匹配，用于大范围的语意召回。
+*   **Track 3: BM25 词法检索** - 作为辅助通道，用于偶尔捕捉特定的专有名词。
 
-## 📦 安装与设置
+### 3. 可视化诊断生态
+后端附带了 `ArcView` HTML 可视化探针，方便在浏览器中直观地查看和调试底层数据库的连通状态。
 
-### 前置要求
-- SillyTavern 最新版本
-- 现代浏览器（Chrome/Firefox/Edge）
-- 至少一个向量化引擎的访问权限
+---
 
-### 安装步骤
-1. 将扩展文件夹复制到 SillyTavern 的扩展目录：
-   ```
-   SillyTavern/public/scripts/extensions/third-party/vectors-enhanced/
-   ```
+## 📦 部署指南 (Deployment)
 
-2. 在 SillyTavern 中启用扩展：
-   - 打开 SillyTavern
-   - 进入"扩展"设置
- 
+由于本项目包含前端插件与独立后端，请按照以下两步顺序进行部署：
 
-3. 配置向量化引擎：
-   - 在扩展设置中选择您要使用的向量化源
-   - 配置必要的API密钥或服务地址
+### 第一步：安装前端插件 (SillyTavern Plugin)
+1. 在 SillyTavern 的“扩展组件”（Extensions）菜单顶部，点击“安装扩展”图标。
+2. 将本仓库的链接 `https://github.com/kerjc4464/ArcFess` 粘贴到弹出的输入框中，点击确认安装。（此时前端连同后端代码会被一并下载到您的 SillyTavern 插件目录中）。
 
-## 🚀 快速开始
+### 第二步：启动独立后端 (ArcFess Server)
+1. 打开您的本地文件夹，导航至：`SillyTavern/public/scripts/extensions/third-party/ArcFess/ArcFess-Backend`。
+2. 双击运行 `Setup_and_Run.bat`，脚本会自动安装 Python 依赖并启动 Flask + Waitress 服务。
+3. 等待终端显示 `Listening on port: 8999` 或类似的服务启动成功提示。
 
-### 1. 向量化聊天记录
-1. 打开任意聊天界面
-2. 选择要处理的消息范围
-3. 配置标签规则（可选）
-4. 点击"开始向量化"
+### 第三步：连接与配置
+1. 刷新 SillyTavern 页面。
+2. 打开 ArcFess 插件设置面板，确保后端的 API 连接地址为 `http://127.0.0.1:8999`，确认连接成功即可开始体验。
 
-### 2. 设置记忆管理
-1. 进入记忆管理设置
-2. 选择AI总结API（OpenAI或Gemini）
-3. 配置API密钥
-4. 设置自动总结参数：
-   - 触发间隔（每N层楼）
-   - 总结深度（最近M层）
-   - 是否自动隐藏已总结内容
+---
 
-### 3. 创建外挂任务
-1. 在源聊天中创建向量化任务
-2. 在目标聊天中点击"添加外挂任务"
-3. 选择要引用的源聊天和任务
-4. 确认添加，任务会自动同步
+## ⚖️ 协议与鸣谢 (License & Credits)
 
-## 📋 使用教程
+**[致谢与贡献者]** 
+*   **RaphllA**: 感谢原作者开源的 `vectors-enhanced` 提供了最初的前端基建与灵感。
+*   **Gemini / Deepseek**: 感谢作为核心 AI 协作者参与了本项目的无数次代码迭代与架构推演。
 
-### 标签提取功能
-查看 [标签提取示例.md](标签提取示例.md) 了解详细的标签规则配置方法。
-
-#### 示例场景
-1. **提取特定标签内容**
-   - 添加"包含"规则：`content`
-   - 系统会提取所有 `<content>` 标签中的内容
-
-2. **排除敏感信息**
-   - 添加"排除"规则：`private`
-   - 系统会在提取前移除所有 `<private>` 标签内容
-
-3. **复杂模式匹配**
-   - 添加"正则包含"规则：`<summary>重要</summary>([\s\S]*?)</details>`
-   - 提取所有标记为"重要"的详情内容
-
-### 记忆管理最佳实践
-1. **合理设置触发间隔**
-   - 日常对话：10-20层楼
-   - 角色扮演：20-30层楼
-   - 长篇创作：30-50层楼
-
-2. **选择合适的总结深度**
-   - 建议为触发间隔的一半
-   - 确保上下文连贯性
-
-3. **世界书集成**
-   - 启用自动创建世界书
-   - 定期检查和编辑生成的条目
-   - 调整关键词匹配规则
-
-### 外挂任务使用技巧
-1. **组织任务结构**
-   - 为不同类型的信息创建独立任务
-   - 使用清晰的命名规则
-
-2. **避免循环引用**
-   - 系统会自动检测，但建议规划好引用关系
-   - 使用树状结构而非网状结构
-
-3. **性能考虑**
-   - 限制引用链深度（建议不超过3层）
-   - 定期清理不再需要的任务
-
+**[开源协议]**
+遵从原项目社区声明，本项目采用 **CC-BY-NC 4.0（署名-非商业性使用）** 许可协议。
+*   允许自由下载、修改并在个人环境中使用。
+*   禁止将其直接用于商业盈利目的。
+*   二次创作或分发时必须保留原作者署名。
