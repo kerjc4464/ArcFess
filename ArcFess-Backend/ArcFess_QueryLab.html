@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<!--
+    ArcFess QueryLab — 双轨道检索策略对比实验室
+    并排比较语义/整句检索（轨道 A）与关键词检索（轨道 B）在相同查询意图下的召回差异。
+    支持 Embedding → FAISS 向量检索 → ReRank 精排的完整检索流水线。
+    自动计算双轨道重叠片段并展示原始权重数值对比。
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArcFess QueryLab - 检索策略对比实验室</title>
+    <style>
+        /* === CSS Variables === */
+        :root {
+            --bg-color: #0d1117;
+            --panel-bg: #161b22;
+            --border-color: #30363d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent-color: #58a6ff;
+            --accent-hover: #1f6feb;
+            --danger-color: #f85149;
+            --success-color: #2ea043;
+            --warning-color: #d29922;
+            --rerank-color: #a371f7;
+            --overlap-color: #d4a72c;
+            --overlap-bg: rgba(212, 167, 44, 0.08);
+            --font-mono: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+        }
+
+        /* === Global Layout === */
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-bottom: 25px;
+        }
+        h3 { color: #ffffff; margin-top: 0; margin-bottom: 15px; font-size: 16px; }
+        h4 { color: var(--text-main); margin: 0 0 10px 0; font-size: 14px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        /* === Config Panel & Forms === */
+        .config-panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 15px;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        label { font-size: 13px; margin-bottom: 5px; color: var(--text-muted); }
+        .input-group { display: flex; gap: 8px; }
+        input[type="text"], input[type="password"], input[type="number"] {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+            flex: 1;
+            font-family: inherit;
+        }
+        input:focus { border-color: var(--accent-color); }
+        .btn-secondary {
+            background-color: var(--border-color);
+            color: var(--text-main);
+            border: none;
+            padding: 0 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-secondary:hover { background-color: #484f58; }
+        .checkbox-group { flex-direction: row; align-items: center; margin-top: 10px; }
+        .checkbox-group input { margin-right: 8px; cursor: pointer; }
+        .checkbox-group label { margin-bottom: 0; cursor: pointer; color: var(--rerank-color); font-weight: 600; }
+        .section-divider { grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 15px; margin-top: 5px; }
+        .input-column {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        textarea {
+            width: 100%;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 12px;
+            border-radius: 6px;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+        }
+        textarea:focus { border-color: var(--accent-color); }
+
+        /* === Track Panels === */
+        .tracks-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .track-panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            position: relative;
+        }
+        .track-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .track-badge {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-color);
+            border: 1px solid rgba(88, 166, 255, 0.3);
+        }
+        .btn-launch {
+            background-color: var(--accent-color);
+            color: #ffffff;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.2s;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+        .btn-launch:hover { background-color: var(--accent-hover); }
+        .btn-launch:disabled { background-color: var(--border-color); color: var(--text-muted); cursor: not-allowed; }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-ghost:hover { border-color: var(--text-main); color: var(--text-main); }
+        .status-msg { font-size: 13px; margin-top: 5px; text-align: center; min-height: 20px; }
+        .error-text { color: var(--danger-color); }
+        .success-text { color: var(--success-color); }
+        .warning-text { color: var(--warning-color); }
+        .rerank-text { color: var(--rerank-color); }
+        .overlap-text { color: var(--overlap-color); }
+        .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .result-column {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 200px;
+        }
+
+        /* === Results Cards === */
+        .memory-card {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+        .score-high { border-left-color: var(--success-color); }
+        .score-med { border-left-color: var(--warning-color); }
+        .score-low { border-left-color: var(--danger-color); }
+        .score-reranked { border-left-color: var(--rerank-color); }
+
+        /* === Overlap Highlighting === */
+        .is-overlap {
+            border-color: var(--overlap-color) !important;
+            background-color: var(--overlap-bg) !important;
+        }
+        .is-overlap .overlap-banner { display: flex; }
+        .overlap-banner {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--overlap-color);
+            margin-bottom: 8px;
+            font-family: var(--font-mono);
+        }
+        .memory-meta {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 6px;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .memory-text { white-space: pre-wrap; word-break: break-all; line-height: 1.7; font-size: 13px; }
+
+        /* === Score Panel === */
+        .score-panel {
+            background: rgba(88, 166, 255, 0.05);
+            border: 1px solid rgba(88, 166, 255, 0.15);
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin-top: 10px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4px 12px;
+        }
+        .score-row { display: flex; justify-content: space-between; color: var(--text-muted); }
+        .score-row .val { color: var(--text-main); }
+        .score-row .val-delta { color: var(--rerank-color); }
+        .score-row .val-overlap { color: var(--overlap-color); }
+
+        /* === Stats Bar === */
+        .stats-bar { display: flex; gap: 20px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .stat-chip {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 16px;
+            text-align: center;
+            min-width: 120px;
+        }
+        .stat-chip .num { font-family: var(--font-mono); font-size: 20px; color: var(--accent-color); display: block; }
+        .stat-chip .lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+
+        /* === Loading / Status === */
+        .loading { text-align: center; color: var(--accent-color); font-style: italic; display: none; padding: 20px 0; }
+        .secure-text { color: var(--warning-color); font-size: 12px; margin-top: 4px; display: none; }
+
+        /* === Comparison Table === */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 12px;
+            font-family: var(--font-mono);
+        }
+        .comparison-table th, .comparison-table td {
+            border: 1px solid var(--border-color);
+            padding: 8px 10px;
+            text-align: left;
+        }
+        .comparison-table th { background: rgba(88, 166, 255, 0.08); color: var(--accent-color); font-weight: 600; }
+        .comparison-table td { color: var(--text-main); }
+        .comparison-table tr:hover td { background: rgba(255,255,255,0.02); }
+        .empty-state { text-align: center; color: var(--text-muted); padding: 40px 0; font-size: 14px; }
+
+        /* === Responsive === */
+        @media (max-width: 900px) {
+            .tracks-container, .results-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>ArcFess QueryLab</h1>
+    <div class="subtitle">检索策略对比实验室 — 并排查看语义检索与关键词检索的差异</div>
+
+    <!-- API 配置面板：API Key 加密保存、FAISS 检索端点、初筛数量、Embedding 与 ReRank 模型参数 -->
+    <div class="config-panel">
+        <div class="form-group" style="grid-column: 1 / -1;">
+            <label>API Key (本地加密防护)</label>
+            <div class="input-group">
+                <input type="password" id="apiKey" placeholder="sk-...">
+                <button id="saveKeyBtn" class="btn-secondary" title="使用进入密码加密并保存在本地">加密保存</button>
+                <button id="clearKeyBtn" class="btn-secondary" title="清除本地凭据" style="display: none;">清除</button>
+            </div>
+            <div id="securityStatus" class="secure-text">已加载加密凭据</div>
+        </div>
+        <div class="form-group">
+            <label>本地 FAISS 检索 URL</label>
+            <input type="text" id="localUrl" value="http://127.0.0.1:8999/query">
+        </div>
+        <div class="form-group">
+            <label>初筛数量 (FAISS Top-K)</label>
+            <input type="number" id="topK" value="10" min="1" max="50">
+        </div>
+        <div class="section-divider"></div>
+        <div class="form-group">
+            <label>Embedding API URL</label>
+            <input type="text" id="embedApiUrl" value="https://api.siliconflow.cn/v1/embeddings">
+        </div>
+        <div class="form-group">
+            <label>Embedding 模型</label>
+            <input type="text" id="modelName" value="Qwen/Qwen3-Embedding-8B">
+        </div>
+        <div class="form-group">
+            <label>ReRank API URL</label>
+            <input type="text" id="rerankApiUrl" value="https://api.siliconflow.cn/v1/rerank">
+        </div>
+        <div class="form-group">
+            <label>ReRank 模型</label>
+            <input type="text" id="rerankModelName" value="Qwen/Qwen3-Reranker-4B">
+        </div>
+    </div>
+
+    <!-- 原始情境输入：可选的对话上下文，用于 LLM 自动生成检索策略 -->
+    <div class="input-column">
+        <h3>原始情境（可选，作为生成参考）</h3>
+        <textarea id="contextInput" rows="4" placeholder="在此处粘贴原始对话或当前情境，可用于 LLM 自动生成检索策略。若不使用自动生成，可直接在各轨道输入查询文本。"></textarea>
+    </div>
+
+    <!-- 双轨道检索面板：轨道 A（语义/整句检索）与轨道 B（关键词检索），各自独立控制 ReRank 开关 -->
+    <div class="tracks-container">
+        <div class="track-panel">
+            <div class="track-header">
+                <h4>轨道 A：语义/整句检索</h4>
+                <span class="track-badge">SEMANTIC</span>
+            </div>
+            <textarea id="trackAInput" rows="5" placeholder="输入完整的句子或段落进行语义检索。例如：你还记得我们第一次见面吗？当时在海边的夕阳下..."></textarea>
+            <div class="form-group checkbox-group" style="margin-top: 10px;">
+                <input type="checkbox" id="trackAUseRerank" checked>
+                <label for="trackAUseRerank">启用 ReRank</label>
+            </div>
+        </div>
+        <div class="track-panel">
+            <div class="track-header">
+                <h4>轨道 B：关键词检索</h4>
+                <span class="track-badge" style="background: rgba(46, 160, 67, 0.15); color: var(--success-color); border-color: rgba(46, 160, 67, 0.3);">KEYWORD</span>
+            </div>
+            <textarea id="trackBInput" rows="5" placeholder="输入提炼后的关键词。例如：海边 第一次见面 夕阳 回忆"></textarea>
+            <div class="form-group checkbox-group" style="margin-top: 10px;">
+                <input type="checkbox" id="trackBUseRerank" checked>
+                <label for="trackBUseRerank">启用 ReRank</label>
+            </div>
+        </div>
+    </div>
+
+    <!-- 控制按钮：一键并行探测 + 清空结果 -->
+    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+        <button id="launchBtn" class="btn-launch" style="flex: 3;">一键并行探测</button>
+        <button id="clearBtn" class="btn-ghost" style="flex: 1;">清空结果</button>
+    </div>
+    <div id="searchStatus" class="status-msg"></div>
+
+    <!-- 全局统计栏：重叠片段数、各轨道独有片段数、ReRank 平均提升幅度 -->
+    <div id="globalStats" class="stats-bar" style="display: none;">
+        <div class="stat-chip"><span class="num" id="statOverlap">0</span><span class="lbl">重叠片段</span></div>
+        <div class="stat-chip"><span class="num" id="statAOnly">0</span><span class="lbl">仅 A 独有</span></div>
+        <div class="stat-chip"><span class="num" id="statBOnly">0</span><span class="lbl">仅 B 独有</span></div>
+        <div class="stat-chip"><span class="num" id="statAvgDelta">-</span><span class="lbl">ReRank 平均提升</span></div>
+    </div>
+
+    <!-- 结果展示网格：左右并排显示轨道 A 与轨道 B 的检索结果卡片 -->
+    <div class="results-grid" id="resultsArea">
+        <div class="result-column">
+            <h3 style="display:flex;justify-content:space-between;align-items:center;">
+                <span>轨道 A 结果</span>
+                <span class="track-badge" id="trackABadge" style="display:none;">SEMANTIC</span>
+            </h3>
+            <div class="loading" id="loadingA">正在检索...</div>
+            <div id="resultA"><div class="empty-state">等待探测指令。</div></div>
+        </div>
+        <div class="result-column">
+            <h3 style="display:flex;justify-content:space-between;align-items:center;">
+                <span>轨道 B 结果</span>
+                <span class="track-badge" id="trackBBadge" style="display:none;">KEYWORD</span>
+            </h3>
+            <div class="loading" id="loadingB">正在检索...</div>
+            <div id="resultB"><div class="empty-state">等待探测指令。</div></div>
+        </div>
+    </div>
+
+    <!-- 原始权重数值对比表：仅展示双轨道均出现的重叠片段的详细分数对比 -->
+    <div class="input-column" id="comparisonPanel" style="display: none; margin-top: 20px;">
+        <h3>原始权重数值对比表</h3>
+        <p style="color: var(--text-muted); font-size: 12px; margin-top: -10px; margin-bottom: 15px;">
+            仅展示在两个轨道中均出现的重叠片段的详细数值。所有分数均为原始 API 返回值，未经修饰。
+        </p>
+        <div style="overflow-x: auto;">
+            <table class="comparison-table" id="comparisonTable">
+                <thead>
+                    <tr>
+                        <th>记忆 ID</th>
+                        <th>轨道 A 原始分</th>
+                        <th>轨道 A ReRank</th>
+                        <th>轨道 A 排名</th>
+                        <th>轨道 B 原始分</th>
+                        <th>轨道 B ReRank</th>
+                        <th>轨道 B 排名</th>
+                        <th>原始分差</th>
+                        <th>ReRank 分差</th>
+                    </tr>
+                </thead>
+                <tbody id="comparisonTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+    /**
+     * ArcFess QueryLab - 检索策略对比实验室
+     *
+     * 核心流程：
+     * 1. 用户输入查询文本（轨道 A 语义检索 + 轨道 B 关键词检索）
+     * 2. 文本通过 Embedding API 转换为向量
+     * 3. 向量送入本地 FAISS 数据库进行近似最近邻检索
+     * 4. 可选：初筛结果送入 ReRank API 进行精排
+     * 5. 双轨道结果并排展示，自动计算重叠片段与数值对比
+     *
+     * 安全特性：API Key 通过 Web Crypto API (AES-256-GCM) 加密后存储于 localStorage，
+     * 需要用户输入主密码才能解密使用，主密码不会持久化存储。
+     */
+
+    // === 加密模块 (Web Crypto API - AES-GCM 256) ===
+    const STORAGE_KEY = 'arcfess_secure_key';
+
+    /**
+     * 将 ArrayBuffer 转换为 Base64 字符串。
+     * 遍历每个字节构造二进制字符串后使用 btoa 编码。
+     * @param {ArrayBuffer} buffer - 要编码的二进制缓冲区
+     * @returns {string} Base64 编码的字符串
+     */
+    function bufferToBase64(buffer) {
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) { binary += String.fromCharCode(bytes[i]); }
+        return window.btoa(binary);
+    }
+    /**
+     * 将 Base64 字符串解码为 ArrayBuffer。
+     * 使用 atob 解码后逐字符还原字节数组。
+     * @param {string} base64 - Base64 编码的字符串
+     * @returns {ArrayBuffer} 解码后的二进制缓冲区
+     */
+    function base64ToBuffer(base64) {
+        const binary = window.atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+        return bytes.buffer;
+    }
+    /**
+     * 使用 AES-256-GCM 加密明文数据。
+     * 密钥通过 PBKDF2 (100,000 次迭代) 从用户密码派生，盐值随机生成。
+     * 返回 Base64 编码的 salt(16) + iv(12) + ciphertext 组合数据包。
+     * @param {string} plaintext - 要加密的明文
+     * @param {string} password - 用户主密码
+     * @returns {Promise<string>} Base64 编码的加密数据包
+     */
+    async function encryptData(plaintext, password) {
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey("raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveKey"]);
+        const salt = window.crypto.getRandomValues(new Uint8Array(16));
+        const key = await window.crypto.subtle.deriveKey(
+            {name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256"},
+            keyMaterial, {name: "AES-GCM", length: 256}, false, ["encrypt"]);
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encryptedContent = await window.crypto.subtle.encrypt({name: "AES-GCM", iv: iv}, key, enc.encode(plaintext));
+        const encryptedBytes = new Uint8Array(encryptedContent);
+        const combined = new Uint8Array(salt.byteLength + iv.byteLength + encryptedBytes.byteLength);
+        combined.set(salt, 0); combined.set(iv, salt.byteLength); combined.set(encryptedBytes, salt.byteLength + iv.byteLength);
+        return bufferToBase64(combined.buffer);
+    }
+    /**
+     * 使用 AES-256-GCM 解密密文数据。
+     * 从组合数据包中提取 salt、iv 和密文，使用 PBKDF2 从密码派生密钥后解密。
+     * @param {string} b64 - Base64 编码的加密数据包
+     * @param {string} password - 用户主密码
+     * @returns {Promise<string>} 解密后的明文
+     */
+    async function decryptData(b64, password) {
+        const combined = new Uint8Array(base64ToBuffer(b64));
+        const salt = combined.slice(0, 16);
+        const iv = combined.slice(16, 28);
+        const data = combined.slice(28);
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey("raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveKey"]);
+        const key = await window.crypto.subtle.deriveKey(
+            {name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256"},
+            keyMaterial, {name: "AES-GCM", length: 256}, false, ["decrypt"]);
+        const decrypted = await window.crypto.subtle.decrypt({name: "AES-GCM", iv: iv}, key, data);
+        return new TextDecoder().decode(decrypted);
+    }
+
+    // === UI 逻辑：API Key 加密保存 ===
+    document.addEventListener('DOMContentLoaded', async () => {
+        // localStorage 加密凭据生命周期：
+        // 1. 页面加载时检测已存储的加密凭据，提示用户输入主密码进行解密
+        // 2. 加密保存：API Key + 主密码 → PBKDF2 派生密钥 → AES-256-GCM 加密 → Base64 → localStorage
+        // 3. 解密加载：localStorage → Base64 解码 → 提取 salt/iv/密文 → PBKDF2 派生密钥 → AES-256-GCM 解密 → 明文
+        // 4. 清除：直接删除 localStorage 中的加密条目
+        // 注意：主密码仅在内存中短暂停留，不会持久化存储
+        const savedEncryptedKey = localStorage.getItem(STORAGE_KEY);
+        const apiKeyInput = document.getElementById('apiKey');
+        const saveBtn = document.getElementById('saveKeyBtn');
+        const clearBtn = document.getElementById('clearKeyBtn');
+        const statusText = document.getElementById('securityStatus');
+
+        if (savedEncryptedKey) {
+            const password = prompt('ArcFess 内存防护已激活。\n请输入访问密码以解密 API Key：');
+            if (password) {
+                try {
+                    const decrypted = await decryptData(savedEncryptedKey, password);
+                    apiKeyInput.value = decrypted;
+                    statusText.style.display = 'block';
+                    saveBtn.style.display = 'none';
+                    clearBtn.style.display = 'block';
+                } catch (e) { alert('解密失败：密码错误或数据已损坏。'); }
+            }
+        }
+
+        saveBtn.addEventListener('click', async () => {
+            const rawKey = apiKeyInput.value.trim();
+            if (!rawKey) { alert('请先输入要保存的 API Key。'); return; }
+            const password = prompt('请设置一个进入密码（主密码），用于加密此 Key：\n请务必牢记，丢失将无法恢复。');
+            if (!password) return;
+            try {
+                const encrypted = await encryptData(rawKey, password);
+                localStorage.setItem(STORAGE_KEY, encrypted);
+                statusText.style.display = 'block';
+                statusText.innerText = '配置已通过 AES-256 加密保存于本地存储。';
+                saveBtn.style.display = 'none';
+                clearBtn.style.display = 'block';
+            } catch (e) { alert('加密过程中发生错误。'); console.error(e); }
+        });
+
+        clearBtn.addEventListener('click', () => {
+            if(confirm('确定要清除本地保存的加密凭据吗？')) {
+                localStorage.removeItem(STORAGE_KEY);
+                apiKeyInput.value = '';
+                statusText.style.display = 'none';
+                saveBtn.style.display = 'block';
+                clearBtn.style.display = 'none';
+            }
+        });
+    });
+
+    // === 核心探测逻辑 ===
+    document.getElementById('launchBtn').addEventListener('click', async () => {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const textA = document.getElementById('trackAInput').value.trim();
+        const textB = document.getElementById('trackBInput').value.trim();
+
+        if (!apiKey) { alert('请提供 API Key 以启动引擎。'); return; }
+        if (!textA && !textB) { alert('至少填写一个轨道的查询内容。'); return; }
+
+        const btn = document.getElementById('launchBtn');
+        const statusDiv = document.getElementById('searchStatus');
+
+        btn.disabled = true;
+        btn.innerText = '并行探测中...';
+        statusDiv.innerHTML = '<span class="warning-text">正在同时向两个轨道发射探测波...</span>';
+
+        document.getElementById('resultA').innerHTML = '';
+        document.getElementById('resultB').innerHTML = '';
+        document.getElementById('comparisonTableBody').innerHTML = '';
+        document.getElementById('comparisonPanel').style.display = 'none';
+        document.getElementById('globalStats').style.display = 'none';
+        document.getElementById('loadingA').style.display = 'block';
+        document.getElementById('loadingB').style.display = 'block';
+        document.getElementById('trackABadge').style.display = 'inline-block';
+        document.getElementById('trackBBadge').style.display = 'inline-block';
+
+        const startTime = performance.now();
+        // 并行探测：两个轨道同时发起检索请求（Embedding → FAISS → ReRank），
+        // Promise.all 确保两轨道的完整流水线并行执行，总耗时取最长轨道的时间
+        const [resultA, resultB] = await Promise.all([
+            textA ? probeTrack(textA, 'A') : Promise.resolve(null),
+            textB ? probeTrack(textB, 'B') : Promise.resolve(null)
+        ]);
+
+        const duration = (performance.now() - startTime).toFixed(0);
+
+        document.getElementById('loadingA').style.display = 'none';
+        document.getElementById('loadingB').style.display = 'none';
+
+        if (resultA && resultA.error) {
+            document.getElementById('resultA').innerHTML = `<div class="memory-card score-low">轨道 A 错误: ${escapeHtml(resultA.error)}</div>`;
+        } else if (resultA) {
+            renderResults(document.getElementById('resultA'), resultA.results, 'A');
+        } else {
+            document.getElementById('resultA').innerHTML = '<div class="empty-state">本轨道未启用。</div>';
+        }
+
+        if (resultB && resultB.error) {
+            document.getElementById('resultB').innerHTML = `<div class="memory-card score-low">轨道 B 错误: ${escapeHtml(resultB.error)}</div>`;
+        } else if (resultB) {
+            renderResults(document.getElementById('resultB'), resultB.results, 'B');
+        } else {
+            document.getElementById('resultB').innerHTML = '<div class="empty-state">本轨道未启用。</div>';
+        }
+
+        if (resultA && !resultA.error && resultB && !resultB.error) {
+            const overlapData = computeOverlap(resultA.results, resultB.results);
+            renderComparisonTable(overlapData);
+            renderGlobalStats(overlapData, resultA.results, resultB.results);
+            highlightOverlaps(overlapData.overlapIds);
+        }
+
+        statusDiv.innerHTML = `<span class="success-text">探测完成，耗时 ${duration}ms</span>`;
+        btn.disabled = false;
+        btn.innerText = '一键并行探测';
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', () => {
+        document.getElementById('resultA').innerHTML = '<div class="empty-state">等待探测指令。</div>';
+        document.getElementById('resultB').innerHTML = '<div class="empty-state">等待探测指令。</div>';
+        document.getElementById('comparisonTableBody').innerHTML = '';
+        document.getElementById('comparisonPanel').style.display = 'none';
+        document.getElementById('globalStats').style.display = 'none';
+        document.getElementById('trackABadge').style.display = 'none';
+        document.getElementById('trackBBadge').style.display = 'none';
+        document.getElementById('searchStatus').innerHTML = '';
+    });
+
+    // === 单轨道探测 ===
+    /**
+     * 执行单轨道的完整检索流水线：Embedding → FAISS 初筛 → 可选 ReRank 精排。
+     * @param {string} text - 查询文本
+     * @param {string} trackLabel - 轨道标识 ('A' 或 'B')
+     * @returns {Promise<{results?: Array, error?: string}>} 检索结果或错误信息
+     */
+    async function probeTrack(text, trackLabel) {
+        try {
+            const vector = await getEmbedding(text);
+            let results = await queryLocalDB(vector);
+            const useRerank = document.getElementById(`track${trackLabel}UseRerank`).checked;
+
+            if (useRerank && results.length > 0) {
+                const textsToRerank = results.map(r => r.text);
+                const rerankScores = await performRerank(text, textsToRerank);
+                rerankScores.forEach(item => {
+                    const originalIndex = item.index;
+                    if (results[originalIndex]) {
+                        results[originalIndex].originalScore = results[originalIndex].score;
+                        results[originalIndex].score = item.relevance_score;
+                        results[originalIndex].isReranked = true;
+                    }
+                });
+                results.sort((a, b) => b.score - a.score);
+            }
+
+            return { results };
+        } catch (error) {
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * 调用 Embedding API 将查询文本转换为向量。
+     * @param {string} text - 要向量化的查询文本
+     * @returns {Promise<number[]>} 向量数组
+     * @throws {Error} API 调用失败或返回无效数据时抛出异常
+     */
+    async function getEmbedding(text) {
+        const endpoint = document.getElementById('embedApiUrl').value.trim();
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const modelName = document.getElementById('modelName').value.trim();
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: modelName, input: text })
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Embedding API 拒绝访问 (${response.status}): ${errText}`);
+        }
+        const data = await response.json();
+        if (!data.data || !data.data[0] || !data.data[0].embedding) {
+            throw new Error('未收到有效的 Vector 数据。');
+        }
+        return data.data[0].embedding;
+    }
+
+    /**
+     * 向本地 FAISS 向量数据库发送查询请求，获取 Top-K 相似记忆。
+     * @param {number[]} vector - 查询向量
+     * @returns {Promise<Array>} 相似记忆列表，每项包含 id, text, score, metadata 等字段
+     * @throws {Error} 数据库连接失败时抛出异常
+     */
+    async function queryLocalDB(vector) {
+        const localUrl = document.getElementById('localUrl').value.trim();
+        const topK = parseInt(document.getElementById('topK').value, 10);
+
+        const response = await fetch(localUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vector: vector, k: topK })
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`本地数据库拒绝访问 (${response.status}): ${errText}`);
+        }
+        const data = await response.json();
+        return data.results || [];
+    }
+
+    /**
+     * 调用 ReRank API 对初筛结果进行精排。
+     * @param {string} query - 原始查询文本
+     * @param {string[]} texts - 待重排序的文档文本数组
+     * @returns {Promise<Array<{index: number, relevance_score: number}>>} 重排序结果
+     * @throws {Error} API 调用失败时抛出异常
+     */
+    async function performRerank(query, texts) {
+        const endpoint = document.getElementById('rerankApiUrl').value.trim();
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const modelName = document.getElementById('rerankModelName').value.trim();
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({ model: modelName, query: query, documents: texts })
+        });
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`ReRank API 拒绝访问 (${response.status}): ${errText}`);
+        }
+        const data = await response.json();
+        return data.results || [];
+    }
+
+    // === 渲染结果 ===
+    /**
+     * 将检索结果渲染为记忆卡片并插入指定容器。
+     * 卡片包含排名、分数（含 ReRank 前后对比）、元数据、文本内容等信息。
+     * @param {HTMLElement} container - 结果容器 DOM 元素
+     * @param {Array} results - 检索结果数组
+     * @param {string} trackLabel - 轨道标识 ('A' 或 'B')
+     */
+    function renderResults(container, results, trackLabel) {
+        if (results.length === 0) {
+            container.innerHTML = '<div class="memory-card" style="text-align:center;">这片记忆海域空空如也。</div>';
+            return;
+        }
+        results.forEach((res, index) => {
+            let scoreDisplay = res.score.toFixed(4);
+            let scoreClass = 'score-low';
+            let rankInfo = `Rank #${index + 1}`;
+
+            if (res.isReranked) {
+                scoreClass = 'score-reranked';
+                scoreDisplay = `ReRank: ${scoreDisplay}`;
+                if (res.originalScore !== undefined) {
+                    const delta = (res.score - res.originalScore).toFixed(4);
+                    const deltaSign = delta >= 0 ? '+' : '';
+                    scoreDisplay += ` (原: ${res.originalScore.toFixed(4)}, ${deltaSign}${delta})`;
+                }
+            } else {
+                if (res.score > 0.75) scoreClass = 'score-high';
+                else if (res.score > 0.6) scoreClass = 'score-med';
+                scoreDisplay = `相似度: ${scoreDisplay}`;
+            }
+
+            let metaDisplay = '未知坐标';
+            if (res.metadata) {
+                if (res.metadata.chapter_title) metaDisplay = `章节: ${res.metadata.chapter_title}`;
+                else if (res.metadata.index !== undefined) metaDisplay = `对话楼层: ${res.metadata.index}`;
+                else if (res.metadata.name) metaDisplay = `文件: ${res.metadata.name}`;
+                else if (res.metadata.collection_id) metaDisplay = `集合: ${res.metadata.collection_id}`;
+            }
+
+            const cardId = `track-${trackLabel}-mem-${res.id || index}`;
+            const card = document.createElement('div');
+            card.className = `memory-card ${scoreClass}`;
+            card.id = cardId;
+            card.dataset.memoryId = res.id || '';
+
+            card.innerHTML = `
+                <div class="overlap-banner"><span>&#9889;</span> <span>在双轨道中均出现</span></div>
+                <div class="memory-meta">
+                    <span><strong>#${index + 1}</strong> | ${scoreDisplay}</span>
+                    <span>${metaDisplay} (ID: ${res.id ? res.id.substring(0,6) + '...' : 'N/A'})</span>
+                </div>
+                <div class="memory-text">${escapeHtml(res.text)}</div>
+                <div class="score-panel">
+                    <div class="score-row"><span>原始分</span><span class="val">${res.originalScore !== undefined ? res.originalScore.toFixed(4) : res.score.toFixed(4)}</span></div>
+                    <div class="score-row"><span>最终分</span><span class="val">${res.score.toFixed(4)}</span></div>
+                    <div class="score-row"><span>排名</span><span class="val">${rankInfo}</span></div>
+                    <div class="score-row"><span>轨道</span><span class="val">${trackLabel}</span></div>
+                </div>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    // === 重叠计算 ===
+    /**
+     * 使用 Map 实现集合交集算法，计算两个轨道检索结果的重叠片段。
+     * 算法：将两个结果集分别索引到 Map<id, result> 中（O(1) 查找），
+     * 遍历 MapA 的键，检查 MapB 中是否存在相同的键（总复杂度 O(n)）。
+     * @param {Array} resultsA - 轨道 A 的检索结果
+     * @param {Array} resultsB - 轨道 B 的检索结果
+     * @returns {{overlapIds: string[], overlapDetails: Array, aOnly: number, bOnly: number}}
+     */
+    function computeOverlap(resultsA, resultsB) {
+        // 将两个结果集分别构建为 Map，以 memory id（或 text）为键，实现 O(1) 查找
+        const mapA = new Map();
+        const mapB = new Map();
+        resultsA.forEach((r, i) => mapA.set(r.id || r.text, { ...r, rank: i + 1 }));
+        resultsB.forEach((r, i) => mapB.set(r.id || r.text, { ...r, rank: i + 1 }));
+
+        const overlapIds = [];
+        const overlapDetails = [];
+
+        // 遍历 MapA，检查每个键是否也存在于 MapB 中（集合交集运算）
+        mapA.forEach((valA, key) => {
+            if (mapB.has(key)) {
+                const valB = mapB.get(key);
+                overlapIds.push(key);
+                overlapDetails.push({
+                    id: key,
+                    a: valA,
+                    b: valB,
+                    originalDelta: (valA.originalScore !== undefined ? valA.originalScore : valA.score) - (valB.originalScore !== undefined ? valB.originalScore : valB.score),
+                    rerankDelta: valA.score - valB.score
+                });
+            }
+        });
+
+        return { overlapIds, overlapDetails, aOnly: resultsA.length - overlapIds.length, bOnly: resultsB.length - overlapIds.length };
+    }
+
+    /**
+     * 为出现在两个轨道中的重叠记忆卡片添加视觉高亮样式。
+     * 通过 data-memory-id 属性查找对应卡片并添加 is-overlap CSS 类。
+     * @param {string[]} overlapIds - 重叠记忆的 ID 列表
+     */
+    function highlightOverlaps(overlapIds) {
+        overlapIds.forEach(id => {
+            const cardA = document.querySelector(`#resultA [data-memory-id="${id}"]`);
+            const cardB = document.querySelector(`#resultB [data-memory-id="${id}"]`);
+            if (cardA) cardA.classList.add('is-overlap');
+            if (cardB) cardB.classList.add('is-overlap');
+        });
+    }
+
+    /**
+     * 渲染双轨道重叠片段的原始权重数值对比表。
+     * 数据流：computeOverlap() → overlapDetails[] → 逐行提取各轨道的原始分、
+     * ReRank 分、排名及分差，构建对比表格行并写入 DOM。
+     * 仅当存在至少一个重叠片段时才显示对比面板。
+     * @param {{overlapDetails: Array}} overlapData - computeOverlap 返回的重叠数据
+     */
+    function renderComparisonTable(overlapData) {
+        const tbody = document.getElementById('comparisonTableBody');
+        tbody.innerHTML = '';
+        if (overlapData.overlapDetails.length === 0) {
+            document.getElementById('comparisonPanel').style.display = 'none';
+            return;
+        }
+
+        // 逐行构建对比数据：提取轨道 A/B 各自的原始分、ReRank 分、排名，计算分差
+        overlapData.overlapDetails.forEach(item => {
+            const tr = document.createElement('tr');
+            const aRaw = item.a.originalScore !== undefined ? item.a.originalScore.toFixed(4) : item.a.score.toFixed(4);
+            const bRaw = item.b.originalScore !== undefined ? item.b.originalScore.toFixed(4) : item.b.score.toFixed(4);
+            const aRe = item.a.isReranked ? item.a.score.toFixed(4) : '-';
+            const bRe = item.b.isReranked ? item.b.score.toFixed(4) : '-';
+            const rawDelta = (parseFloat(aRaw) - parseFloat(bRaw)).toFixed(4);
+            const reDelta = (item.a.isReranked && item.b.isReranked) ? (item.a.score - item.b.score).toFixed(4) : '-';
+
+            tr.innerHTML = `
+                <td>${escapeHtml(String(item.id).substring(0, 12))}</td>
+                <td>${aRaw}</td>
+                <td>${aRe}</td>
+                <td>#${item.a.rank}</td>
+                <td>${bRaw}</td>
+                <td>${bRe}</td>
+                <td>#${item.b.rank}</td>
+                <td style="color:${rawDelta > 0 ? 'var(--success-color)' : (rawDelta < 0 ? 'var(--danger-color)' : 'var(--text-muted)')}">${rawDelta > 0 ? '+' : ''}${rawDelta}</td>
+                <td style="color:${reDelta !== '-' ? (reDelta > 0 ? 'var(--success-color)' : (reDelta < 0 ? 'var(--danger-color)' : 'var(--text-muted)')) : 'var(--text-muted)'}">${reDelta !== '-' ? (reDelta > 0 ? '+' : '') + reDelta : '-'}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('comparisonPanel').style.display = 'block';
+    }
+
+    /**
+     * 渲染全局统计栏：重叠片段数、各轨道独有片段数、ReRank 平均提升幅度。
+     * @param {Object} overlapData - computeOverlap 返回的重叠数据
+     * @param {Array} resultsA - 轨道 A 的检索结果
+     * @param {Array} resultsB - 轨道 B 的检索结果
+     */
+    function renderGlobalStats(overlapData, resultsA, resultsB) {
+        document.getElementById('statOverlap').innerText = overlapData.overlapIds.length;
+        document.getElementById('statAOnly').innerText = overlapData.aOnly;
+        document.getElementById('statBOnly').innerText = overlapData.bOnly;
+
+        let totalDelta = 0;
+        let count = 0;
+        [...resultsA, ...resultsB].forEach(r => {
+            if (r.originalScore !== undefined) {
+                totalDelta += (r.score - r.originalScore);
+                count++;
+            }
+        });
+        const avgDelta = count > 0 ? (totalDelta / count).toFixed(4) : '-';
+        document.getElementById('statAvgDelta').innerText = avgDelta;
+        document.getElementById('globalStats').style.display = 'flex';
+    }
+
+    /**
+     * 转义 HTML 特殊字符，防止 XSS 注入。
+     * @param {string} unsafe - 可能包含 HTML 特殊字符的原始字符串
+     * @returns {string} 转义后的安全字符串
+     */
+    function escapeHtml(unsafe) {
+        return unsafe
+             .replace(/&/g, "&amp;")
+             .replace(/</g, "&lt;")
+             .replace(/>/g, "&gt;")
+             .replace(/"/g, "&quot;")
+             .replace(/'/g, "&#039;");
+    }
+</script>
+</body>
+</html>

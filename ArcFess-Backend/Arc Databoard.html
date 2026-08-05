@@ -1,0 +1,750 @@
+<!--
+ArcFess DataBoard — 记忆中枢仪表盘
+功能: 可视化查看/管理 ArcFess 向量记忆库中的所有任务和索引块
+  - 顶部统计卡片 (向量总数、活跃任务数、预估存储量)
+  - 记忆区块卡片网格 (每个任务对应一个区块)
+  - 本地编辑: 可自定义任务名称和标签（存储于 localStorage）
+  - 批量选择模式: 勾选多区块后一键删除
+  - 单区块删除: 每个卡片右上角的 X 按钮
+  - 数据库优化: 手动触发 SQLite VACUUM 回收空间
+API 依赖: ArcFess vector_server.py 的 /tasks_stats, /delete, /optimize 端点
+默认端口: 8999
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>ArcFess DataBoard - 记忆中枢</title>
+    <style>
+        /* ============================================================
+           CSS 变量 & 配色方案 v2: Lacrimosa（暗黑 + 深红色强调）
+           设计理念: 极简工业风，卡片式布局，低对比度 + 弱发光
+           ============================================================ */
+        :root {
+            /* 配色方案 v2: Lacrimosa */
+            --bg-color: #050508;
+            --bg-gradient: radial-gradient(circle at 50% -20%, #18181b 0%, #000000 100%);
+            --card-bg: rgba(20, 20, 23, 0.7);
+            --card-border: rgba(255, 255, 255, 0.05);
+            --text-main: #e4e4e7;
+            --text-sub: #71717a;
+            --accent: #d01e3b; 
+            --accent-glow: rgba(208, 30, 59, 0.3);
+            --secondary: #d4d4d8; 
+            --font-mono: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+            --font-sans: 'Inter', 'Segoe UI', sans-serif;
+        }
+
+        /* === 全局布局 === */
+        body {
+            background-color: var(--bg-color);
+            background-image: var(--bg-gradient);
+            background-attachment: fixed;                          /* 固定背景，滚动时不移动 */
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        /* === 页面头部 === */
+        .header {
+            width: 100%;
+            max-width: 1100px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: 50px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--card-border);
+            position: relative;
+        }
+        
+        /* 头部底部的红色强调线（装饰性伪元素） */
+        .header::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            width: 80px;
+            height: 2px;
+            background: var(--accent);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        h1 {
+            margin: 0;
+            font-weight: 300;
+            letter-spacing: 0.5px;
+            font-size: 2.2em;
+            color: var(--text-sub);
+        }
+        
+        h1 span { font-weight: 600; color: var(--text-main); }
+        h1 .brand-highlight {
+            color: var(--accent);
+            text-shadow: 0 0 25px var(--accent-glow);
+            font-family: var(--font-mono);
+            letter-spacing: -1px;
+        }
+
+        /* === 按钮与工具栏样式 === */
+        .action-bar {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-sub);
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-radius: 2px;
+            font-family: var(--font-mono);
+            font-size: 0.75em;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn:hover {
+            border-color: var(--text-main);
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .btn-danger { color: #d01e3b; border-color: rgba(208, 30, 59, 0.3); }  /* 红色警告按钮（删除） */
+        .btn-danger:hover {
+            border-color: var(--accent);
+            color: var(--bg-color);
+            background: var(--accent);
+            box-shadow: 0 0 10px var(--accent-glow);
+        }
+        .btn.active {
+            background: var(--text-main);
+            color: var(--bg-color);
+            border-color: var(--text-main);
+        }
+
+        /* === 统计卡片区（3列网格） === */
+        .stats-overview {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 25px;
+            width: 100%;
+            max-width: 1100px;
+            margin-bottom: 60px;
+        }
+        .stat-box {
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);                              /* 毛玻璃背景 */
+            padding: 30px;
+            border-radius: 2px;
+            border: 1px solid var(--card-border);
+            text-align: left;
+            position: relative;
+            transition: transform 0.3s ease;
+        }
+        .stat-box:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.1); }
+        /* 卡片左侧装饰线 */
+        .stat-box::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 2px; height: 100%;
+            background: rgba(255,255,255,0.1);
+        }
+        .stat-box.highlight::before { background: var(--accent); box-shadow: 0 0 15px var(--accent-glow); } /* 首个卡片高亮 */
+        .stat-value { 
+            font-family: var(--font-mono); font-size: 2.2em; font-weight: 400; 
+            margin: 10px 0 5px 0; color: var(--text-main); letter-spacing: -1px;
+        }
+        .stat-label { color: var(--text-sub); font-size: 0.75em; letter-spacing: 2px; text-transform: uppercase; }
+
+        /* === 任务列表网格（自适应列数） === */
+        .task-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1100px;
+        }
+        .task-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(15px);                              /* 毛玻璃效果 */
+            border: 1px solid var(--card-border);
+            border-radius: 2px;
+            padding: 25px;
+            position: relative;
+            transition: all 0.2s ease;
+            cursor: default;
+        }
+        .task-card:hover {
+            transform: translateY(-3px);                              /* 悬浮上移动画 */
+            box-shadow: 0 20px 40px -10px rgba(0,0,0,0.6);
+            border-color: rgba(255,255,255,0.1);
+        }
+        .task-card.selected {
+            border-color: var(--accent);                               /* 选中状态：红色边框 */
+            background: rgba(208, 30, 59, 0.08);
+        }
+
+        /* 任务ID（等宽字体，低透明度） */
+        .task-id {
+            font-family: var(--font-mono);
+            color: var(--text-sub);
+            font-size: 0.7em;
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 8px;
+            display: inline-block;
+            width: 100%;
+        }
+        .task-name {
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 25px;
+            color: var(--text-main);
+            letter-spacing: 0.5px;
+            /* 防止过长的名字撑破卡片 */
+            word-wrap: break-word; 
+        }
+        .task-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 0.85em;
+            color: var(--text-sub);
+        }
+        .task-info span:last-child { font-family: var(--font-mono); color: var(--text-main); }
+
+        /* 进度条容器（1px 细线） */
+        .bar-container {
+            height: 1px; background: rgba(255,255,255,0.1);
+            margin: 20px 0 15px 0; position: relative;
+        }
+        .bar-fill {
+            height: 100%; background: var(--text-main); width: 0%;
+            box-shadow: 0 0 10px rgba(255,255,255,0.3);
+            transition: width 1s cubic-bezier(0.22, 1, 0.36, 1);     /* 缓出动画 */
+        }
+
+        /* 标签容器（flex 布局，标签左对齐 + 编辑按钮右对齐） */
+        .tags-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-top: 15px;
+            gap: 10px;
+        }
+
+        .tags { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+        .tag {
+            background: rgba(255,255,255,0.03); padding: 3px 8px; border-radius: 2px;
+            font-size: 0.65em; color: var(--text-sub);
+            border: 1px solid rgba(255,255,255,0.05); font-family: var(--font-mono);
+        }
+        
+        /* === 卡片内操作按钮（默认隐藏，hover 时显示） === */
+        .card-action-btn {
+            background: transparent; border: 1px solid transparent; color: #444;
+            cursor: pointer; transition: all 0.3s; opacity: 0;
+        }
+        .task-card:hover .card-action-btn { opacity: 1; }
+
+        /* 删除按钮：固定在卡片右上角 */
+        .delete-btn {
+            position: absolute; top: 25px; right: 25px;
+            font-size: 1em; padding: 0;
+        }
+        .delete-btn:hover { color: var(--accent); }
+
+        /* 编辑按钮：固定在右下角（标签旁边） */
+        .edit-local-btn {
+            font-family: var(--font-sans);
+            font-size: 0.7em;
+            padding: 2px 6px;
+            color: var(--text-sub);
+            border-color: rgba(255,255,255,0.05);
+            border-radius: 2px;
+            flex-shrink: 0; /* 防止按钮被 flex 压缩 */
+        }
+        .edit-local-btn:hover {
+            border-color: var(--text-main);
+            color: var(--text-main);
+        }
+
+        /* === 批量选择模式 === */
+        /* 复选框默认隐藏，启用批量模式后显示 */
+        .task-checkbox {
+            position: absolute; top: 25px; left: 25px;
+            width: 18px; height: 18px; accent-color: var(--accent);
+            display: none; cursor: pointer; z-index: 10;
+        }
+        body.batch-mode .task-checkbox { display: block; }            /* 批量模式下显示复选框 */
+        body.batch-mode .delete-btn { display: none; }                /* 批量模式下隐藏单个删除按钮 */
+
+        /* === 加载动画 (Loader) === */
+        .loader {
+            border: 1px solid rgba(255,255,255,0.05);
+            border-top: 1px solid var(--accent);                     /* 红色顶部边框 */
+            border-radius: 50%; width: 20px; height: 20px;
+            animation: spin 0.8s linear infinite; margin: 60px auto;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* 滚动条样式 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-color); }
+        ::-webkit-scrollbar-thumb { background: #222; }
+    </style>
+</head>
+<body>
+
+    <!-- ============================================================
+        页面头部：品牌标题 + 工具栏
+        ============================================================ -->
+    <div class="header">
+        <h1>Arc<span class="brand-highlight">Fess</span> <span>DataBoard</span></h1>
+        
+        <div class="action-bar">
+            <button id="batch-toggle-btn" class="btn" onclick="toggleBatchMode()">
+                Batch Select
+            </button>
+            <button id="batch-del-btn" class="btn btn-danger" style="display:none;" onclick="execBatchDelete()">
+                Delete Selected (<span id="selected-count">0</span>)
+            </button>
+            
+            <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.1); margin: 0 10px;"></div>
+
+            <button class="btn" onclick="triggerVacuum()" title="物理重组数据库空间 (VACUUM)">
+                Optimize DB
+            </button>
+            <button class="btn" onclick="fetchData()">Refresh</button>
+        </div>
+    </div>
+
+    <!-- ============================================================
+        统计卡片区：向量总数 / 活跃任务数 / 预估存储量
+        ============================================================ -->
+    <div class="stats-overview">
+        <div class="stat-box highlight">
+            <div class="stat-value" id="total-vectors">--</div>
+            <div class="stat-label">Total Vectors</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="total-tasks">--</div>
+            <div class="stat-label">Active Tasks</div>
+        </div>
+        <div class="stat-box">
+            <div class="stat-value" id="total-size">--</div>
+            <div class="stat-label">Est. Storage</div>
+        </div>
+    </div>
+
+    <!-- 加载动画（默认隐藏，fetctData 时显示） -->
+    <div id="loader" class="loader"></div>
+
+    <!-- ============================================================
+        任务卡片网格（自适应列宽，auto-fill 340px 最小列宽）
+        每个卡片代表一个记忆区块（taskId 分组）
+        ============================================================ -->
+    <div class="task-grid" id="task-grid"></div>
+
+    <script>
+        // ============================================================
+        // ArcFess DataBoard — 记忆中枢仪表盘 JS 逻辑
+        // ============================================================
+        // 功能概述:
+        //   - /tasks_stats    → 获取全部记忆区块统计
+        //   - /delete         → 单个或批量删除记忆区块
+        //   - /optimize       → 执行 SQLite VACUUM 压缩数据库
+        // 本地增强:
+        //   - taskNameMap     → localStorage 中自定义的任务名称
+        //   - taskTagMap      → localStorage 中自定义的标签（覆盖后端 types）
+        // ============================================================
+
+        /** @const {string} 后端 API 基础地址（默认 vector_server.py 监听 8999） */
+        const API_URL = 'http://localhost:8999';
+        let isBatchMode = false;                                       // 批量选择模式开关
+        let selectedTasks = new Set();                                 // 当前选中的 taskId 集合
+        
+        // ============================================================
+        // 本地记忆便利贴 — 初始化
+        // ============================================================
+        // 从 localStorage 加载自定义名称映射和标签映射
+        // 数据结构: { "taskId_abc": "自定义名称", ... }
+        //           { "taskId_xyz": ["chat", "archive"], ... }
+        let taskNameMap = JSON.parse(localStorage.getItem('arc_task_names')) || {};
+        let taskTagMap = JSON.parse(localStorage.getItem('arc_task_tags')) || {};
+
+        // ============================================================
+        // 本地编辑核心函数 — 修改任务名称和标签
+        // ============================================================
+        /**
+         * 通过两次 prompt 交互分别编辑任务名称和标签，
+         * 修改结果存入 localStorage，然后刷新 UI。
+         *
+         * @param {string} taskId - 要编辑的任务 ID
+         * @param {Event} [event] - 触发事件对象，用于 stopPropagation 防止冒泡
+         */
+        function editTaskLocal(taskId, event) {
+            if (event) event.stopPropagation();                        // 防止触发批量模式的卡片选择
+            
+            // --- 步骤1：编辑名称 ---
+            let currentName = taskNameMap[taskId] || taskId;
+            let newName = prompt(`为记忆区块 [ ${taskId} ] 赋予新的代号：\n(留空以恢复原始ID)`, currentName);
+            
+            if (newName !== null) {
+                if (newName.trim() === "" || newName === taskId) {
+                    delete taskNameMap[taskId];                        // 留空或与ID相同 → 恢复默认
+                } else {
+                    taskNameMap[taskId] = newName.trim(); 
+                }
+            } else {
+                return;                                                // 用户点取消 → 不保存
+            }
+
+            // --- 步骤2：编辑标签 ---
+            const currentTagsList = taskTagMap[taskId] || [];
+            let newTagsRaw = prompt(`修改区块 [ ${taskId} ] 的标签代号 (英文逗号分隔)：\n(例如: chat, paper, archive)\n(留空以恢复原始标签)`, currentTagsList.join(', '));
+            
+            if (newTagsRaw !== null) {
+                if (newTagsRaw.trim() === "") {
+                    delete taskTagMap[taskId];                         // 留空 → 删除本地记录，回退到后端标签
+                } else {
+                    let tagArray = newTagsRaw.split(',')
+                                             .map(t => t.trim().toLowerCase())
+                                             .filter(t => t !== "");
+                    taskTagMap[taskId] = Array.from(new Set(tagArray)); // Set 去重
+                }
+            }
+
+            // --- 步骤3：持久化到 localStorage ---
+            localStorage.setItem('arc_task_names', JSON.stringify(taskNameMap));
+            localStorage.setItem('arc_task_tags', JSON.stringify(taskTagMap));
+            
+            // --- 步骤4：刷新 UI ---
+            fetchData(); 
+        }
+
+        /**
+         * 从后端获取所有任务统计并渲染 UI。
+         * 端点: GET {API_URL}/tasks_stats
+         * 
+         * 流程:
+         *   1. 清空现有选择状态
+         *   2. 显示加载动画
+         *   3. 请求 /tasks_stats 端点
+         *   4. 渲染统计卡片 (renderStats)
+         *   5. 渲染任务卡片网格 (renderTasks)
+         *   6. 连接失败时显示错误提示
+         */
+        async function fetchData() {
+            const grid = document.getElementById('task-grid');
+            const loader = document.getElementById('loader');
+            
+            selectedTasks.clear();                                     // 清空旧的选择状态
+            updateBatchUI();
+            
+            grid.innerHTML = '';
+            loader.style.display = 'block';
+
+            try {
+                const res = await fetch(`${API_URL}/tasks_stats`);
+                if (!res.ok) throw new Error('CONNECTION_REFUSED');
+                
+                const data = await res.json();
+                renderStats(data);
+                renderTasks(data.tasks);
+            } catch (err) {
+                grid.innerHTML = `<div style="text-align:center; width:100%; grid-column: 1/-1; color: var(--text-sub); padding: 40px;">
+                    <h3 style="color: var(--accent); font-weight: 300;">CONNECTION LOST</h3>
+                    <p style="font-family: var(--font-mono); font-size: 0.9em;">Vector server unreachable.</p>
+                </div>`;
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        /**
+         * 渲染顶部三个统计卡片（带动画）。
+         *
+         * @param {Object} data - /tasks_stats 返回的完整数据
+         * @param {number} data.total_vectors - 总向量数（带动画显示）
+         * @param {Array} data.tasks - 任务列表
+         */
+        function renderStats(data) {
+            animateValue("total-vectors", 0, data.total_vectors, 800);  // 800ms 数字递增动画
+            document.getElementById('total-tasks').innerText = data.tasks.length;
+            let totalBytes = data.tasks.reduce((acc, t) => acc + t.sizeBytes, 0);
+            document.getElementById('total-size').innerText = formatSize(totalBytes);
+        }
+        
+        /**
+         * 数字递增动画——使用 easeOutExpo 缓动函数。
+         * 
+         * @param {string} id - 目标 DOM 元素 ID
+         * @param {number} start - 起始值
+         * @param {number} end - 目标值
+         * @param {number} duration - 动画持续时间（毫秒）
+         * 
+         * 缓动公式: 1 - Math.pow(2, -10 * progress)
+         * 曲线特性: 初始速度极快，快速衰减至目标值（类似 CSS easeOutExpo）
+         */
+        function animateValue(id, start, end, duration) {
+            const obj = document.getElementById(id);
+            if(!obj) return;
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                const value = Math.floor(end * (1 - Math.pow(2, -10 * progress)));  // easeOutExpo
+                obj.innerHTML = value.toLocaleString();
+                if (progress < 1) window.requestAnimationFrame(step);
+                else obj.innerHTML = end.toLocaleString();
+            };
+            window.requestAnimationFrame(step);
+        }
+
+        /**
+         * 渲染任务卡片网格——每个 task 对应的记忆区块卡片。
+         * 
+         * 核心逻辑:
+         *   1. 计算最大向量数 → 用于各卡片的进度条百分比
+         *   2. 格式化日期（中文本地化）
+         *   3. 本地映射优先：taskNameMap 覆盖显示名，taskTagMap 覆盖标签
+         *   4. 批量模式下点击卡片切换选择状态
+         * 
+         * @param {Array} tasks - 从 /tasks_stats 返回的 tasks 数组
+         */
+        function renderTasks(tasks) {
+            const grid = document.getElementById('task-grid');
+            const maxCount = Math.max(...tasks.map(t => t.count)) || 1;  // 取最大值用于百分比基准
+
+            tasks.forEach((task, index) => {
+                // 格式化最后更新时间
+                const date = new Date(task.lastSeen * 1000).toLocaleString('zh-CN', {
+                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+                }).replace(/\//g, '.');
+                
+                const percent = (task.count / maxCount) * 100;          // 进度条百分比
+                
+                // --- 本地UI映射 逻辑修正 ---
+                // 1. 名字优先：先查本地自定义名称，否则使用原始 taskId
+                let displayTitle = taskNameMap[task.taskId] || (task.taskId === 'unknown_task' ? 'ORPHANED_DATA' : task.taskId);
+                
+                // 2. 标签优先：本地标签覆盖后端 types
+                let displayTags = taskTagMap[task.taskId] || task.types; 
+                const typesHtml = displayTags.map(t => `<span class="tag">${t.toUpperCase()}</span>`).join('');
+                // -----------------------------
+
+                const card = document.createElement('div');
+                card.className = 'task-card';
+                card.dataset.tid = task.taskId;
+                card.style.animation = `fadeIn 0.4s ease forwards ${index * 0.05}s`;  // 逐帧延迟入场
+                card.style.opacity = '0'; 
+                
+                // 批量模式：点击卡片（非按钮/复选框区域）切换选中状态
+                card.onclick = (e) => {
+                    if(isBatchMode && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT') {
+                        toggleSelection(task.taskId);
+                    }
+                };
+
+                card.innerHTML = `
+                    <input type="checkbox" class="task-checkbox" 
+                        onchange="toggleSelection('${task.taskId}', event)" 
+                        id="chk-${task.taskId}">
+                    
+                    <button class="card-action-btn delete-btn" onclick="deleteTask('${task.taskId}')" title="PURGE">✕</button>
+                    
+                    <div class="task-id">ID: ${task.taskId}</div>
+                    <div class="task-name">${displayTitle}</div>
+                    
+                    <div class="task-info"><span>VECTORS</span><span>${task.count}</span></div>
+                    <div class="task-info"><span>SIZE</span><span>${formatSize(task.sizeBytes)}</span></div>
+                    <div class="task-info"><span>UPDATED</span><span>${date}</span></div>
+
+                    <div class="bar-container"><div class="bar-fill" style="width: ${percent}%"></div></div>
+                    
+                    <div class="tags-container">
+                        <div class="tags">${typesHtml}</div>
+                        <button class="card-action-btn btn edit-local-btn" onclick="editTaskLocal('${task.taskId}', event)">EDIT</button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+        
+        // ============================================================
+        // 批量模式逻辑
+        // ============================================================
+        /**
+         * 切换批量选择模式。
+         * 批量模式激活时:
+         *   - body 添加 batch-mode class → 复选框显示，单删按钮隐藏
+         *   - 退出时清空所有选中状态
+         */
+        function toggleBatchMode() {
+            isBatchMode = !isBatchMode;
+            document.body.classList.toggle('batch-mode', isBatchMode);
+            const btn = document.getElementById('batch-toggle-btn');
+            
+            if (isBatchMode) {
+                btn.classList.add('active');
+                btn.innerText = 'Exit Selection';
+            } else {
+                btn.classList.remove('active');
+                btn.innerText = 'Batch Select';
+                selectedTasks.clear();
+                updateBatchUI();
+                document.querySelectorAll('.task-card').forEach(c => c.classList.remove('selected'));
+                document.querySelectorAll('.task-checkbox').forEach(c => c.checked = false);
+            }
+        }
+
+        /**
+         * 切换单个任务的选中状态。
+         *
+         * @param {string} tid - 任务 ID
+         * @param {Event} [event] - 触发事件对象（用于阻止冒泡）
+         */
+        function toggleSelection(tid, event) {
+            if (!isBatchMode) return;                                  // 非批量模式不做任何事
+            if(event) event.stopPropagation();
+
+            const card = document.querySelector(`.task-card[data-tid="${tid}"]`);
+            const checkbox = document.getElementById(`chk-${tid}`);
+
+            if (selectedTasks.has(tid)) {
+                selectedTasks.delete(tid);
+                card.classList.remove('selected');
+                checkbox.checked = false;
+            } else {
+                selectedTasks.add(tid);
+                card.classList.add('selected');
+                checkbox.checked = true;
+            }
+            updateBatchUI();
+        }
+
+        /** 更新批量删除按钮的显示状态和选中计数 */
+        function updateBatchUI() {
+            const delBtn = document.getElementById('batch-del-btn');
+            document.getElementById('selected-count').innerText = selectedTasks.size;
+            delBtn.style.display = selectedTasks.size > 0 ? 'flex' : 'none';
+        }
+
+        /**
+         * 执行批量删除——逐个调用 /delete 端点删除选中的任务。
+         * 完成后自动退出批量模式并刷新 UI。
+         */
+        async function execBatchDelete() {
+            if (selectedTasks.size === 0) return;
+            if (!confirm(`CONFIRM: Purge ${selectedTasks.size} tasks?`)) return;
+
+            const tasks = Array.from(selectedTasks);
+            let successCount = 0;
+            
+            for (const tid of tasks) {
+                try {
+                    const res = await fetch(`${API_URL}/delete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filter: { taskId: tid } })
+                    });
+                    if (res.ok) successCount++;
+                } catch (e) { console.error(e); }
+            }
+            
+            alert(`✅ Deleted: ${successCount}/${tasks.length}\nTip: Run "Optimize DB" later to free up space.`);
+            toggleBatchMode();
+            fetchData();
+        }
+
+        // ============================================================
+        // 单个删除
+        // ============================================================
+        /**
+         * 删除单个记忆区块（通过卡片的 × 按钮触发）。
+         *
+         * @param {string} taskId - 要删除的任务 ID
+         */
+        async function deleteTask(taskId) {
+            if (!confirm(`Confirm Purge: [ ${taskId} ]`)) return;
+            try {
+                const res = await fetch(`${API_URL}/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filter: { taskId: taskId } })
+                });
+                if (res.ok) {
+                    alert(`✅ Purged.\n(Don't forget to run Optimize DB periodically)`);
+                    fetchData(); 
+                }
+            } catch (err) { alert('❌ Error: ' + err.message); }
+        }
+
+        // ============================================================
+        // 手动数据库优化 (SQLite VACUUM)
+        // ============================================================
+        /**
+         * 触发数据库物理空间回收——调用 /optimize 端点执行 SQLite VACUUM。
+         * 
+         * VACUUM 会重建数据库文件，回收被删除记录释放的空间。
+         * 需要足够的磁盘空间来创建临时副本，大数据库可能耗时数十秒。
+         */
+        async function triggerVacuum() {
+            if (!confirm("Start Database Optimization (VACUUM)?\nThis will physically release disk space.")) return;
+            
+            const btn = event.target; 
+            const originalText = btn.innerText;
+            btn.innerText = "OPTIMIZING...";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API_URL}/optimize`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    alert(`✨ Optimization Complete.\nTime elapsed: ${data.duration.toFixed(2)}s`);
+                } else {
+                    alert('❌ Error: ' + data.error);
+                }
+            } catch (err) {
+                alert('❌ Network Error');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        /**
+         * 格式化字节数为可读字符串。
+         *
+         * @param {number} bytes - 字节数
+         * @returns {string} 如 "1.5 GB", "256 MB", "0 B"
+         */
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));       // 确定数量级 (0=B, 1=KB, 2=MB, 3=GB)
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // 注入卡片淡入动画的 @keyframes 定义
+        const styleSheet = document.createElement("style");
+        styleSheet.innerText = `@keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }`;
+        document.head.appendChild(styleSheet);
+
+        // 页面加载完成后立即拉取数据
+        fetchData();
+    </script>
+</body>
+</html>

@@ -29,6 +29,17 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Archives
+*.rar
+*.7z
+*.zip
 
 # Debug/audit scripts
 audit_db*.py

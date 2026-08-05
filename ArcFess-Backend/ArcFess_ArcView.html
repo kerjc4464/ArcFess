@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArcFess 架构全景图</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-card: #161b22;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --text-bright: #f0f6fc;
+  --border: #30363d;
+  --purple-bg: #2d1b69;
+  --purple-light: #3d2b79;
+  --purple-accent: #8b5cf6;
+  --purple-text: #a78bfa;
+  --blue-bg: #1a3a5c;
+  --blue-light: #1a4a6c;
+  --blue-accent: #3b82f6;
+  --blue-text: #60a5fa;
+  --green-bg: #1a4d2e;
+  --green-light: #1a5d3e;
+  --green-accent: #22c55e;
+  --green-text: #4ade80;
+  --arrow-write: #f59e0b;
+  --arrow-read: #06b6d4;
+  --arrow-memory: #ec4899;
+  --arrow-event: #eab308;
+  --highlight-glow: rgba(255,255,255,0.25);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── HEADER ── */
+.header {
+  text-align: center;
+  padding: 28px 20px 12px;
+  position: relative;
+  z-index: 10;
+}
+.header h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: linear-gradient(135deg, #a78bfa 0%, #60a5fa 40%, #4ade80 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header .subtitle {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
+
+/* ── MAIN GRID ── */
+.main-grid {
+  display: grid;
+  grid-template-rows: auto auto auto auto auto auto auto;
+  gap: 0;
+  padding: 0 24px 24px;
+  max-width: 1600px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* ── LAYER SECTIONS ── */
+.layer-section {
+  position: relative;
+  border-radius: 14px;
+  padding: 20px 24px 24px;
+  margin-bottom: 0;
+  transition: box-shadow 0.3s;
+}
+.layer-section.highlighted {
+  box-shadow: 0 0 30px var(--highlight-glow);
+}
+
+.layer-purple { background: var(--purple-bg); border: 1px solid rgba(139,92,246,0.25); }
+.layer-blue   { background: var(--blue-bg);   border: 1px solid rgba(59,130,246,0.25); }
+.layer-green  { background: var(--green-bg);  border: 1px solid rgba(34,197,94,0.25); }
+
+.layer-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  letter-spacing: 0.02em;
+}
+.layer-purple .layer-label { color: var(--purple-text); }
+.layer-blue   .layer-label { color: var(--blue-text);   }
+.layer-green  .layer-label { color: var(--green-text);  }
+
+.layer-label .dot {
+  width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+}
+.layer-purple .dot { background: var(--purple-accent); box-shadow: 0 0 8px var(--purple-accent); }
+.layer-blue   .dot { background: var(--blue-accent);   box-shadow: 0 0 8px var(--blue-accent);   }
+.layer-green  .dot { background: var(--green-accent);  box-shadow: 0 0 8px var(--green-accent);  }
+
+.layer-en {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+/* ── MODULE GROUP CARDS ── */
+.module-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.module-card {
+  background: rgba(22,27,34,0.7);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all 0.25s;
+  min-width: 200px;
+  flex: 1 1 auto;
+  max-width: 420px;
+  position: relative;
+}
+.module-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255,255,255,0.25);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+.module-card.highlighted {
+  border-color: #fff !important;
+  box-shadow: 0 0 24px var(--highlight-glow) !important;
+  background: rgba(40,40,55,0.9) !important;
+  z-index: 5;
+}
+
+.card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--text-bright);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.card-title .icon { font-size: 15px; }
+
+.card-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+}
+.card-item {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.card-item.file { color: #e2c08d; }
+.card-item.class { color: #79c0ff; }
+.card-item.func { color: #d2a8ff; }
+.card-item.endpoint { color: #7ee787; font-family: 'SF Mono','Fira Code','Cascadia Code',monospace; font-size: 10.5px; }
+.card-item.path { color: #ffa657; }
+.card-item.note { color: #8b949e; font-style: italic; }
+
+.card-sub {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── ARROW ZONES ── */
+.arrow-zone {
+  height: 38px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+.arrow-flow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+  transition: all 0.3s;
+}
+.arrow-flow.dimmed { opacity: 0.25; }
+.arrow-flow.highlighted { opacity: 1; transform: scale(1.05); }
+
+.arrow-flow .alabel {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.arrow-flow .aarrow { font-size: 15px; }
+
+.flow-write  { background: rgba(245,158,11,0.12);  color: var(--arrow-write);  }
+.flow-read   { background: rgba(6,182,212,0.12);   color: var(--arrow-read);   }
+.flow-memory { background: rgba(236,72,153,0.12);  color: var(--arrow-memory); }
+.flow-event  { background: rgba(234,179,8,0.12);   color: var(--arrow-event);  }
+
+/* ── SVG ARROW CANVAS ── */
+.arrow-svg-wrap {
+  position: relative;
+  width: 100%;
+  height: 50px;
+  pointer-events: none;
+}
+.arrow-svg-wrap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── LEGEND ── */
+.legend-wrap {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 20px 24px 8px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.legend-swatch {
+  width: 14px; height: 14px; border-radius: 3px;
+}
+.legend-swatch.purple { background: var(--purple-bg); border: 1px solid var(--purple-accent); }
+.legend-swatch.blue   { background: var(--blue-bg);   border: 1px solid var(--blue-accent);   }
+.legend-swatch.green  { background: var(--green-bg);  border: 1px solid var(--green-accent);  }
+.legend-swatch.write  { background: var(--arrow-write);  }
+.legend-swatch.read   { background: var(--arrow-read);   }
+.legend-swatch.memory { background: var(--arrow-memory); }
+.legend-swatch.event  { background: var(--arrow-event);  }
+
+/* ── FOOTER ── */
+.footer {
+  text-align: center;
+  padding: 8px 20px 20px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  margin: 0 24px;
+}
+.footer strong { color: var(--text-bright); }
+
+/* ── TOOLTIP ── */
+.tooltip {
+  display: none;
+  position: fixed;
+  background: #1c2128;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 100;
+  max-width: 340px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.tooltip.visible { display: block; }
+.tooltip .tt-title { font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
+.tooltip .tt-desc { color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .module-card { min-width: 150px; max-width: 100%; flex: 1 1 100%; }
+  .main-grid { padding: 0 12px 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ═══════════ -->
+<div class="header">
+  <h1>ArcFess 架构全景图</h1>
+  <div class="subtitle">前端插件 &nbsp;·&nbsp; 后端服务 &nbsp;·&nbsp; 外部API &nbsp;&mdash;&nbsp; 三层架构</div>
+</div>
+
+<div class="main-grid">
+
+<!-- ═══════════ LAYER 1: 前端插件层 ═══════════ -->
+<div class="layer-section layer-purple" data-layer="frontend">
+  <div class="layer-label"><span class="dot"></span>前端插件层<span class="layer-en">SillyTavern Extension</span></div>
+  <div class="module-grid">
+
+    <!-- 1. UI界面模块 -->
+    <div class="module-card" data-group="ui" data-flows="event">
+      <div class="card-title"><span class="icon">&#x1F4CB;</span>UI 界面模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">src/ui/</span></div>
+      <div class="card-items">
+        <span class="card-item file">settingsManager.js</span>
+        <span class="card-item file">StateManager.js</span>
+        <span class="card-item file">EventManager.js</span>
+        <span class="card-item file">ActionButtons</span>
+        <span class="card-item file">TaskList</span>
+        <span class="card-item file">FileList</span>
+        <span class="card-item file">WorldInfoList</span>
+        <span class="card-item file">TagUI</span>
+        <span class="card-item file">TagRulesEditor</span>
+        <span class="card-item file">MemoryUI</span>
+        <span class="card-item file">MessageUI</span>
+        <span class="card-item file">ProgressManager</span>
+        <span class="card-item file">NotificationManager</span>
+        <span class="card-item file">settings-modular.html</span>
+        <span class="card-item file">style.css</span>
+      </div>
+    </div>
+
+    <!-- 2. 核心逻辑模块 -->
+    <div class="module-card" data-group="core" data-flows="write read memory event" style="max-width:480px">
+      <div class="card-title"><span class="icon">&#x2699;&#xFE0F;</span>核心逻辑模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">src/core/</span></div>
+      <div class="card-sub" style="margin-top:0;padding-top:0;border:none;font-weight:600;color:#d2a8ff;">&#x1F6E0; 管道引擎</div>
+      <div class="card-items">
+        <span class="card-item file">TextPipeline</span>
+        <span class="card-item file">TextDispatcher</span>
+        <span class="card-item file">ProcessingContext</span>
+        <span class="card-item file">MiddlewareManager</span>
+        <span class="card-item file">ProcessorRegistry</span>
+        <span class="card-item file">ProcessorFactory</span>
+        <span class="card-item file">LifecycleManager</span>
+      </div>
+      <div class="card-sub" style="font-weight:600;color:#d2a8ff;">&#x1F9E9; 核心组件</div>
+      <div class="card-items">
+        <span class="card-item class">VectorizationProcessor</span>
+        <span class="card-item note">分块: size/chapter/tag/floor/history_story</span>
+        <span class="card-item class">ChatExtractor</span>
+        <span class="card-item class">FileExtractor</span>
+        <span class="card-item class">WorldInfoExtractor</span>
+        <span class="card-item class">FusionManager</span>
+        <span class="card-item note">增量向量化</span>
+        <span class="card-item class">EnhancedQuerySystem</span>
+        <span class="card-item note">双轨检索</span>
+        <span class="card-item class">MemoryService</span>
+        <span class="card-item note">AI摘要→世界书</span>
+        <span class="card-item class">ExternalTaskManager</span>
+        <span class="card-item class">TaskReferenceResolver</span>
+      </div>
+    </div>
+
+    <!-- 3. 存储通信模块 -->
+    <div class="module-card" data-group="infra" data-flows="write read">
+      <div class="card-title"><span class="icon">&#x1F4E1;</span>存储通信模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">src/infrastructure/</span></div>
+      <div class="card-items">
+        <span class="card-item file">StorageAdapter.js</span>
+        <span class="card-item note">HTTP客户端, 端口8999</span>
+        <span class="card-item file">VectorizationAdapter.js</span>
+        <span class="card-item note">嵌入API封装</span>
+        <span class="card-item file">ConfigManager.js</span>
+        <span class="card-item note">设置读写</span>
+        <span class="card-item file">EventBus.js</span>
+        <span class="card-item note">发布/订阅事件总线</span>
+      </div>
+    </div>
+
+    <!-- 4. 检索增强模块 -->
+    <div class="module-card" data-group="rerank" data-flows="read">
+      <div class="card-title"><span class="icon">&#x1F4CA;</span>检索增强模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">src/services/rerank/</span></div>
+      <div class="card-items">
+        <span class="card-item class">RerankService.js</span>
+        <span class="card-item class">RerankConfig.js</span>
+      </div>
+    </div>
+
+    <!-- 5. 工具模块 -->
+    <div class="module-card" data-group="utils" data-flows="write read memory">
+      <div class="card-title"><span class="icon">&#x1F9F0;</span>工具模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">src/utils/</span></div>
+      <div class="card-items">
+        <span class="card-item file">chatUtils.js</span>
+        <span class="card-item file">contentFilter.js</span>
+        <span class="card-item file">hash.js</span>
+        <span class="card-item file">tagExtractor.js</span>
+        <span class="card-item file">tagScanner.js</span>
+        <span class="card-item file">taskNaming.js</span>
+        <span class="card-item file">Logger.js</span>
+      </div>
+    </div>
+
+    <!-- 6. 调试模块 -->
+    <div class="module-card" data-group="debug" data-flows="event">
+      <div class="card-title"><span class="icon">&#x1F41B;</span>调试模块 <span style="font-weight:400;color:var(--text-dim);font-size:10px">debug/</span></div>
+      <div class="card-items">
+        <span class="card-item file">debugger.js</span>
+        <span class="card-item file">ui-manager.js</span>
+        <span class="card-item path">analyzers/*</span>
+        <span class="card-item path">tools/*</span>
+      </div>
+    </div>
+
+    <!-- 7. 主入口 -->
+    <div class="module-card" data-group="entry" data-flows="read write memory event">
+      <div class="card-title"><span class="icon">&#x1F3AF;</span>主入口 <span style="font-weight:400;color:var(--text-dim);font-size:10px">index.js (~4000行)</span></div>
+      <div class="card-items">
+        <span class="card-item func">rearrangeChat()</span>
+        <span class="card-item note">生成拦截器 generate_interceptor</span>
+        <span class="card-item func">vectorizeContent()</span>
+        <span class="card-item note">向量化流程</span>
+        <span class="card-item func">斜杠命令注册</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── ARROW ZONE 1: 前端 → 后端 ── -->
+<div class="arrow-zone">
+  <span class="arrow-flow flow-write" data-flow="write">
+    <span class="alabel">&#x1F4E4; 向量化流 (Write)</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">HTTP POST /insert</span>
+    <span class="aarrow">&darr;</span>
+    <span>SQLite + FAISS</span>
+  </span>
+  <span class="arrow-flow flow-read" data-flow="read">
+    <span class="alabel">&#x1F4E5; 检索流 (Read)</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">双轨检索</span>
+    <span class="aarrow">&darr;</span>
+    <span>ReRank</span>
+  </span>
+  <span class="arrow-flow flow-memory" data-flow="memory">
+    <span class="alabel">&#x1F9E0; 记忆摘要流 (Memory)</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">AI摘要→世界书</span>
+  </span>
+  <span class="arrow-flow flow-event" data-flow="event">
+    <span class="alabel">&#x26A1; 事件流 (Event)</span>
+    <span class="aarrow">&uarr;</span>
+    <span style="font-size:10px;opacity:0.7">eventSource→StateManager→UI</span>
+  </span>
+</div>
+
+<!-- ═══════════ LAYER 2: 后端服务层 ═══════════ -->
+<div class="layer-section layer-blue" data-layer="backend">
+  <div class="layer-label"><span class="dot"></span>后端服务层<span class="layer-en">ArcFess Python Backend</span></div>
+  <div class="module-grid">
+
+    <!-- 1. 主服务 -->
+    <div class="module-card" data-group="server" data-flows="write read memory">
+      <div class="card-title"><span class="icon">&#x1F578;&#xFE0F;</span>主服务</div>
+      <div class="card-items">
+        <span class="card-item file">vector_server.py</span>
+        <span class="card-item note">Flask + Waitress</span>
+        <span class="card-item note">端口: 8999 &nbsp;|&nbsp; 线程: 4</span>
+      </div>
+    </div>
+
+    <!-- 2. REST API 端点 -->
+    <div class="module-card" data-group="api" data-flows="write read memory" style="max-width:500px">
+      <div class="card-title"><span class="icon">&#x1F310;</span>REST API 端点</div>
+      <div class="card-items">
+        <span class="card-item endpoint">GET /status</span><span class="card-item note">健康检查</span>
+        <span class="card-item endpoint">POST /insert</span><span class="card-item note">存入向量记忆</span>
+        <span class="card-item endpoint">POST /query</span><span class="card-item note">向量相似搜索 (FAISS L2)</span>
+        <span class="card-item endpoint">POST /delete</span><span class="card-item note">删除记忆 (按ID/taskId)</span>
+        <span class="card-item endpoint">POST /purge</span><span class="card-item note">清空集合</span>
+        <span class="card-item endpoint">POST /thought_proxy</span><span class="card-item note">LLM API代理 (绕过CORS, SSRF保护)</span>
+        <span class="card-item endpoint">POST /optimize</span><span class="card-item note">数据库优化 (VACUUM)</span>
+        <span class="card-item endpoint">GET /tasks_stats</span><span class="card-item note">任务统计</span>
+        <span class="card-item endpoint">GET /collections</span><span class="card-item note">列出集合</span>
+      </div>
+    </div>
+
+    <!-- 3. 存储引擎 -->
+    <div class="module-card" data-group="storage" data-flows="write read">
+      <div class="card-title"><span class="icon">&#x1F5C4;&#xFE0F;</span>存储引擎</div>
+      <div class="card-items">
+        <span class="card-item class">SQLite</span>
+        <span class="card-item path">vectors.db</span>
+        <span class="card-item note">持久化存储, WAL模式</span>
+        <span class="card-item class">FAISS IndexFlatL2</span>
+        <span class="card-item note">内存向量索引, L2距离</span>
+      </div>
+      <div class="card-sub">
+        SQLite存数据 + FAISS做搜索
+      </div>
+    </div>
+
+    <!-- 4. 辅助工具 -->
+    <div class="module-card" data-group="tools-be" data-flows="memory">
+      <div class="card-title"><span class="icon">&#x1F527;</span>辅助工具</div>
+      <div class="card-items">
+        <span class="card-item file">cors_breaker.py</span>
+        <span class="card-item note">CORS代理 (端口9000, Gemini)</span>
+        <span class="card-item file">clean_memory.py</span>
+        <span class="card-item note">数据库清理去重</span>
+        <span class="card-item file">kk.py</span>
+        <span class="card-item note">数据库检查工具</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── ARROW ZONE 2: 后端 → 外部 ── -->
+<div class="arrow-zone">
+  <span class="arrow-flow flow-write" data-flow="write">
+    <span class="alabel">&#x1F4E4; 嵌入调用</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">/v1/embeddings</span>
+    <span class="aarrow">&darr;</span>
+    <span>Qwen3-Embedding-8B</span>
+  </span>
+  <span class="arrow-flow flow-read" data-flow="read">
+    <span class="alabel">&#x1F4E5; 重排序调用</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">/v1/rerank</span>
+    <span class="aarrow">&darr;</span>
+    <span>Qwen3-Reranker-4B</span>
+  </span>
+  <span class="arrow-flow flow-memory" data-flow="memory">
+    <span class="alabel">&#x1F9E0; LLM推理调用</span>
+    <span class="aarrow">&darr;</span>
+    <span style="font-size:10px;opacity:0.7">/v1/chat/completions</span>
+  </span>
+</div>
+
+<!-- ═══════════ LAYER 3: 外部服务层 ═══════════ -->
+<div class="layer-section layer-green" data-layer="external">
+  <div class="layer-label"><span class="dot"></span>外部服务层<span class="layer-en">External APIs</span></div>
+  <div class="module-grid">
+
+    <!-- 1. SiliconFlow -->
+    <div class="module-card" data-group="siliconflow" data-flows="write read memory" style="max-width:440px">
+      <div class="card-title"><span class="icon">&#x2601;&#xFE0F;</span>SiliconFlow API <span style="font-weight:400;color:var(--text-dim);font-size:10px">api.siliconflow.cn</span></div>
+      <div class="card-items">
+        <span class="card-item endpoint">/v1/embeddings</span>
+        <span class="card-item note">文本嵌入 · Qwen3-Embedding-8B</span>
+        <span class="card-item endpoint">/v1/rerank</span>
+        <span class="card-item note">结果重排 · Qwen3-Reranker-4B</span>
+        <span class="card-item endpoint">/v1/chat/completions</span>
+        <span class="card-item note">LLM推理 · Qwen2.5-7B-Instruct</span>
+      </div>
+    </div>
+
+    <!-- 2. 本地AI服务 -->
+    <div class="module-card" data-group="local-ai" data-flows="write">
+      <div class="card-title"><span class="icon">&#x1F4BB;</span>本地AI服务 <span style="font-weight:400;color:var(--text-dim);font-size:10px">可选</span></div>
+      <div class="card-items">
+        <span class="card-item class">Ollama</span>
+        <span class="card-item note">localhost:11434 · 本地嵌入</span>
+        <span class="card-item class">vLLM</span>
+        <span class="card-item note">localhost:8000 · 本地嵌入</span>
+        <span class="card-item class">Google Gemini</span>
+        <span class="card-item note">generativelanguage.googleapis.com · 记忆摘要</span>
+      </div>
+    </div>
+
+    <!-- 3. ST内置API -->
+    <div class="module-card" data-group="st-api" data-flows="read event">
+      <div class="card-title"><span class="icon">&#x1F91D;</span>SillyTavern 内置API <span style="font-weight:400;color:var(--text-dim);font-size:10px">ST内部</span></div>
+      <div class="card-items">
+        <span class="card-item func">eventSource</span>
+        <span class="card-item note">聊天事件</span>
+        <span class="card-item func">setExtensionPrompt</span>
+        <span class="card-item note">提示词注入</span>
+        <span class="card-item func">getContext</span>
+        <span class="card-item note">上下文获取</span>
+        <span class="card-item func">world-info.js</span>
+        <span class="card-item note">世界书管理</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</div><!-- /main-grid -->
+
+<!-- ═══════════ LEGEND ═══════════ -->
+<div class="legend-wrap">
+  <div class="legend-item"><span class="legend-swatch purple"></span> 前端插件层</div>
+  <div class="legend-item"><span class="legend-swatch blue"></span> 后端服务层</div>
+  <div class="legend-item"><span class="legend-swatch green"></span> 外部服务层</div>
+  <div class="legend-item" style="margin-left:8px;border-left:1px solid var(--border);padding-left:20px;"><span class="legend-swatch write"></span> 向量化流</div>
+  <div class="legend-item"><span class="legend-swatch read"></span> 检索流</div>
+  <div class="legend-item"><span class="legend-swatch memory"></span> 记忆摘要流</div>
+  <div class="legend-item"><span class="legend-swatch event"></span> 事件流</div>
+</div>
+
+<!-- ═══════════ FOOTER ═══════════ -->
+<div class="footer">
+  <strong>通信协议:</strong> HTTP REST &nbsp;·&nbsp; <strong>后端端口:</strong> 8999 &nbsp;·&nbsp; <strong>CORS代理:</strong> 9000 &nbsp;·&nbsp; <strong>前端标识:</strong> ArcFess v0.7<br>
+  <span style="font-size:10px;opacity:0.6">点击模块卡片以高亮关联数据流</span>
+</div>
+
+<!-- ═══════════ TOOLTIP ═══════════ -->
+<div class="tooltip" id="tooltip"><div class="tt-title"></div><div class="tt-desc"></div></div>
+
+<!-- ═══════════ INTERACTION SCRIPT ═══════════ -->
+<script>
+(function(){
+  const cards = document.querySelectorAll('.module-card');
+  const flows = document.querySelectorAll('.arrow-flow');
+  const layers = document.querySelectorAll('.layer-section');
+  const tooltip = document.getElementById('tooltip');
+
+  const flowMap = {
+    write:  { label:'向量化流 (Write path)',           desc:'UI选择内容→提取器→管道→嵌入API→StorageAdapter→POST /insert→SQLite+FAISS' },
+    read:   { label:'检索流 (Read path)',              desc:'rearrangeChat触发→双轨(Egos调LLM搜+直接搜FAISS)→结果合并→ReRank→setExtensionPrompt注入' },
+    memory: { label:'记忆摘要流 (Memory path)',          desc:'聊天消息→MemoryService→调LLM API→创建世界书条目→可选向量化新条目' },
+    event:  { label:'事件流 (Event path)',              desc:'ST eventSource→EventManager→StateManager→UI组件更新' },
+  };
+
+  function clearAllHighlights() {
+    cards.forEach(c => c.classList.remove('highlighted'));
+    flows.forEach(f => f.classList.remove('highlighted','dimmed'));
+    layers.forEach(l => l.classList.remove('highlighted'));
+  }
+
+  function highlightFlow(flowName) {
+    flows.forEach(f => {
+      if (f.dataset.flow === flowName) f.classList.add('highlighted');
+      else f.classList.add('dimmed');
+    });
+  }
+
+  cards.forEach(card => {
+    card.addEventListener('click', function(e) {
+      e.stopPropagation();
+      clearAllHighlights();
+      card.classList.add('highlighted');
+      const flowNames = (card.dataset.flows || '').split(' ').filter(Boolean);
+      flowNames.forEach(highlightFlow);
+      const layer = card.closest('.layer-section');
+      if (layer) layer.classList.add('highlighted');
+    });
+
+    card.addEventListener('mouseenter', function(e) {
+      const flowNames = (card.dataset.flows || '').split(' ').filter(Boolean);
+      if (!flowNames.length) return;
+      const title = card.querySelector('.card-title');
+      const name = title ? title.textContent.replace(/\s+/g,' ').trim() : '模块';
+      const flowLabels = flowNames.map(f => (flowMap[f]||{}).label||f).join(' · ');
+      tooltip.querySelector('.tt-title').textContent = name;
+      tooltip.querySelector('.tt-desc').textContent = '关联数据流: ' + flowLabels;
+      tooltip.classList.add('visible');
+    });
+
+    card.addEventListener('mouseleave', function() {
+      tooltip.classList.remove('visible');
+    });
+
+    card.addEventListener('mousemove', function(e) {
+      tooltip.style.left = (e.clientX + 18) + 'px';
+      tooltip.style.top  = (e.clientY + 14) + 'px';
+    });
+  });
+
+  // Click on arrow flow badges to highlight related cards
+  flows.forEach(flow => {
+    flow.addEventListener('click', function(e) {
+      e.stopPropagation();
+      clearAllHighlights();
+      flow.classList.add('highlighted');
+      const flowName = flow.dataset.flow;
+      cards.forEach(card => {
+        const cardFlows = (card.dataset.flows || '').split(' ').filter(Boolean);
+        if (cardFlows.includes(flowName)) card.classList.add('highlighted');
+      });
+    });
+
+    flow.addEventListener('mouseenter', function(e) {
+      const flowName = flow.dataset.flow;
+      const info = flowMap[flowName];
+      if (info) {
+        tooltip.querySelector('.tt-title').textContent = info.label;
+        tooltip.querySelector('.tt-desc').textContent = info.desc;
+        tooltip.classList.add('visible');
+      }
+    });
+    flow.addEventListener('mouseleave', function() {
+      tooltip.classList.remove('visible');
+    });
+    flow.addEventListener('mousemove', function(e) {
+      tooltip.style.left = (e.clientX + 18) + 'px';
+      tooltip.style.top  = (e.clientY + 14) + 'px';
+    });
+  });
+
+  // Click background to clear highlights
+  document.querySelector('.main-grid').addEventListener('click', function(e) {
+    if (e.target === this || e.target.closest('.layer-section') && !e.target.closest('.module-card') && !e.target.closest('.arrow-flow')) {
+      clearAllHighlights();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

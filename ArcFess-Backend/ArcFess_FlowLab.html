@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<!--
+  ArcFess FlowLab — Complete Pipeline Simulator
+  1:1 replication of ArcFess's dual-track retrieval → merge → dedup → rerank → prompt assembly pipeline.
+  Full-stack visual debugger: probe the vector DB via embeddings, apply alpha ratio truncation,
+  deduplicate by text content, re-rank with cross-encoder, and preview the final assembled prompt.
+  Designed for transparency, parameter tuning, and education on RAG pipeline internals.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArcFess FlowLab - 完整流程模拟器</title>
+<style>
+/* === CSS Variables === */
+:root {
+  --bg-color: #0d1117;
+  --panel-bg: #161b22;
+  --border-color: #30363d;
+  --text-main: #c9d1d9;
+  --text-muted: #8b949e;
+  --accent-color: #58a6ff;
+  --accent-hover: #1f6feb;
+  --danger-color: #f85149;
+  --success-color: #2ea043;
+  --warning-color: #d29922;
+  --rerank-color: #a371f7;
+  --overlap-color: #d4a72c;
+  --sense-color: #3fb950;
+  --reason-color: #58a6ff;
+  --font-mono: 'JetBrains Mono','Consolas','Courier New',monospace;
+}
+/* === Global Layout === */
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-color); color: var(--text-main);
+  margin: 0; padding: 20px; line-height: 1.6;
+}
+h1 {
+  text-align: center; color: #fff;
+  border-bottom: 1px solid var(--border-color); padding-bottom: 15px;
+  letter-spacing: 2px; text-shadow: 0 0 10px rgba(88,166,255,0.3);
+  margin-bottom: 8px;
+}
+.subtitle { text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 25px; }
+h3 { color: #fff; margin-top: 0; margin-bottom: 15px; font-size: 15px; }
+h4 { color: var(--text-main); margin: 0 0 10px 0; font-size: 13px; }
+.container { max-width: 1400px; margin: 0 auto; }
+
+/* === Config Panel & Forms === */
+.config-panel {
+  background: var(--panel-bg); border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 20px; margin-bottom: 20px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px;
+}
+.form-group { display: flex; flex-direction: column; }
+label { font-size: 13px; margin-bottom: 5px; color: var(--text-muted); }
+.input-group { display: flex; gap: 8px; }
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  background: var(--bg-color); border: 1px solid var(--border-color); color: var(--text-main);
+  padding: 8px 12px; border-radius: 6px; font-size: 14px; outline: none;
+  transition: border-color .2s; flex: 1; font-family: inherit;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent-color); }
+.btn-secondary {
+  background: var(--border-color); color: var(--text-main); border: none;
+  padding: 0 12px; border-radius: 6px; font-size: 13px; cursor: pointer; transition: background .2s;
+}
+.btn-secondary:hover { background: #484f58; }
+.checkbox-group { flex-direction: row; align-items: center; margin-top: 8px; }
+.checkbox-group input { margin-right: 8px; cursor: pointer; }
+.checkbox-group label { margin-bottom: 0; cursor: pointer; font-weight: 600; }
+.section-divider { grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 12px; margin-top: 4px; }
+
+.input-column {
+  background: var(--panel-bg); border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 20px; margin-bottom: 20px;
+}
+textarea { width: 100%; resize: vertical; min-height: 80px; }
+
+/* === Track Panels === */
+.tracks-container {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;
+}
+.track-panel {
+  background: var(--panel-bg); border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 20px; position: relative;
+}
+.track-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.track-badge {
+  font-family: var(--font-mono); font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: rgba(88,166,255,0.15); color: var(--accent-color); border: 1px solid rgba(88,166,255,0.3);
+}
+.track-badge.b-sense { background: rgba(63,185,80,0.15); color: var(--sense-color); border-color: rgba(63,185,80,0.3); }
+.track-badge.b-reason { background: rgba(88,166,255,0.15); color: var(--reason-color); border-color: rgba(88,166,255,0.3); }
+
+/* === Strategy Bar (Sliders) === */
+.strategy-bar {
+  background: var(--panel-bg); border: 1px solid var(--border-color);
+  border-radius: 8px; padding: 20px; margin-bottom: 20px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;
+}
+.slider-wrap { display: flex; flex-direction: column; gap: 8px; }
+.slider-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+input[type="range"] {
+  -webkit-appearance: none; width: 100%; height: 6px; background: var(--border-color);
+  border-radius: 3px; outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; background: var(--accent-color);
+  border-radius: 50%; cursor: pointer; border: 2px solid var(--bg-color);
+}
+.slider-value {
+  font-family: var(--font-mono); font-size: 18px; color: var(--accent-color);
+  text-align: center; margin-top: 4px;
+}
+
+.btn-launch {
+  background: var(--accent-color); color: #fff; border: none;
+  padding: 14px 24px; border-radius: 6px; font-size: 16px; font-weight: 600;
+  cursor: pointer; width: 100%; transition: background .2s; letter-spacing: 1px; margin-bottom: 10px;
+}
+.btn-launch:hover { background: var(--accent-hover); }
+.btn-launch:disabled { background: var(--border-color); color: var(--text-muted); cursor: not-allowed; }
+
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border-color); color: var(--text-muted);
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .2s;
+}
+.btn-ghost:hover { border-color: var(--text-main); color: var(--text-main); }
+
+/* === Timeline Visualization === */
+.timeline-wrap { margin-bottom: 20px; }
+.timeline-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.timeline {
+  position: relative; padding-left: 28px;
+}
+.timeline::before {
+  content: ''; position: absolute; left: 8px; top: 0; bottom: 0;
+  width: 2px; background: var(--border-color);
+}
+.timeline-step {
+  position: relative; margin-bottom: 16px;
+}
+.timeline-step::before {
+  content: ''; position: absolute; left: -24px; top: 6px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--border-color); border: 2px solid var(--bg-color);
+}
+.timeline-step.active::before { background: var(--accent-color); box-shadow: 0 0 8px rgba(88,166,255,0.4); }
+.timeline-step.completed::before { background: var(--success-color); }
+.timeline-step.error::before { background: var(--danger-color); }
+
+.stage-box {
+  background: var(--panel-bg); border: 1px solid var(--border-color);
+  border-radius: 6px; overflow: hidden;
+}
+.stage-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; cursor: pointer; background: rgba(255,255,255,0.02);
+  transition: background .2s;
+}
+.stage-header:hover { background: rgba(255,255,255,0.04); }
+.stage-title { font-weight: 600; font-size: 14px; }
+.stage-meta { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.stage-toggle { font-size: 12px; color: var(--text-muted); transition: transform .2s; }
+.stage-toggle.expanded { transform: rotate(180deg); }
+.stage-content {
+  display: none; padding: 16px; border-top: 1px solid var(--border-color);
+}
+.stage-content.expanded { display: block; }
+
+/* === Memory Cards === */
+.memory-card {
+  background: var(--bg-color); border: 1px solid var(--border-color);
+  border-left: 4px solid var(--border-color); border-radius: 6px;
+  padding: 14px; margin-bottom: 12px; font-size: 13px;
+}
+.score-high { border-left-color: var(--success-color); }
+.score-med { border-left-color: var(--warning-color); }
+.score-low { border-left-color: var(--danger-color); }
+.tag-sense { border-left-color: var(--sense-color); }
+.tag-reason { border-left-color: var(--reason-color); }
+.tag-dedup { border-left-color: var(--danger-color); opacity: 0.7; }
+
+.memory-meta {
+  display: flex; justify-content: space-between; color: var(--text-muted);
+  margin-bottom: 8px; font-size: 12px; border-bottom: 1px solid var(--border-color);
+  padding-bottom: 5px; flex-wrap: wrap; gap: 4px;
+}
+.memory-text { white-space: pre-wrap; word-break: break-all; line-height: 1.6; font-size: 12px; }
+.score-panel {
+  background: rgba(88,166,255,0.05); border: 1px solid rgba(88,166,255,0.15);
+  border-radius: 4px; padding: 8px 10px; margin-top: 10px;
+  font-family: var(--font-mono); font-size: 11px;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 12px;
+}
+.score-row { display: flex; justify-content: space-between; color: var(--text-muted); }
+.score-row .val { color: var(--text-main); }
+.score-row .val-sense { color: var(--sense-color); }
+.score-row .val-reason { color: var(--reason-color); }
+.score-row .val-rerank { color: var(--rerank-color); }
+
+/* === Comparison Table === */
+.comparison-table {
+  width: 100%; border-collapse: collapse; margin-top: 10px;
+  font-size: 12px; font-family: var(--font-mono);
+}
+.comparison-table th, .comparison-table td {
+  border: 1px solid var(--border-color); padding: 8px 10px; text-align: left;
+}
+.comparison-table th { background: rgba(88,166,255,0.08); color: var(--accent-color); font-weight: 600; }
+.comparison-table td { color: var(--text-main); }
+.comparison-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* === Loading/Status === */
+.status-msg { font-size: 13px; margin-top: 5px; text-align: center; min-height: 20px; }
+.error-text { color: var(--danger-color); }
+.success-text { color: var(--success-color); }
+.warning-text { color: var(--warning-color); }
+.rerank-text { color: var(--rerank-color); }
+.overlap-text { color: var(--overlap-color); }
+
+/* === Prompt Preview === */
+.prompt-preview {
+  background: var(--bg-color); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 16px; font-family: var(--font-mono);
+  font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  line-height: 1.7; color: var(--text-main); max-height: 400px; overflow-y: auto;
+}
+
+.empty-state { text-align: center; color: var(--text-muted); padding: 30px 0; font-size: 13px; }
+.secure-text { color: var(--warning-color); font-size: 12px; margin-top: 4px; display: none; }
+/* === Thought Engine Output === */
+.te-output-box {
+  background: var(--bg-color); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 12px; margin-top: 10px; font-size: 13px;
+}
+.te-step { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed var(--border-color); }
+.te-step:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.te-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+
+.toolbar { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+
+/* === Responsive === */
+@media (max-width: 900px) {
+  .tracks-container, .strategy-bar { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ArcFess FlowLab</h1>
+  <div class="subtitle">完整流程模拟器 — 1:1 复现 ArcFess 双轨检索、混合、去重、Rerank、Prompt 组装全链路</div>
+
+  <!-- API 配置面板: Embedding 向量化、FAISS 本地检索、Thought Proxy 代理转发、LLM 聊天、ReRank 精排 — 所有后端端点配置 -->
+  <div class="config-panel">
+    <div class="form-group" style="grid-column:1/-1;">
+      <label>API Key (本地加密防护)</label>
+      <div class="input-group">
+        <input type="password" id="apiKey" placeholder="sk-...">
+        <button id="saveKeyBtn" class="btn-secondary">加密保存</button>
+        <button id="clearKeyBtn" class="btn-secondary" style="display:none">清除</button>
+      </div>
+      <div id="securityStatus" class="secure-text">已加载加密凭据</div>
+    </div>
+    <div class="form-group"><label>Embedding API URL</label><input type="text" id="embedApiUrl" value="https://api.siliconflow.cn/v1/embeddings"></div>
+    <div class="form-group"><label>Embedding 模型</label><input type="text" id="modelName" value="Qwen/Qwen3-Embedding-8B"></div>
+    <div class="form-group"><label>本地 FAISS URL</label><input type="text" id="localUrl" value="http://127.0.0.1:8999/query"></div>
+    <div class="form-group"><label>集合过滤 (可选,逗号分隔)</label><input type="text" id="collections" placeholder="留空查询全部集合"></div>
+    <div class="section-divider"></div>
+    <div class="form-group"><label>本地 Thought Proxy URL</label><input type="text" id="thoughtProxyUrl" value="http://127.0.0.1:8999/thought_proxy"></div>
+    <div class="form-group"><label>目标 LLM API URL (由代理转发)</label><input type="text" id="llmUrl" value="https://api.siliconflow.cn/v1/chat/completions"></div>
+    <div class="form-group"><label>LLM 模型</label><input type="text" id="llmModel" value="Qwen/Qwen2.5-7B-Instruct"></div>
+    <div class="section-divider"></div>
+    <div class="form-group"><label>ReRank API URL</label><input type="text" id="rerankApiUrl" value="https://api.siliconflow.cn/v1/rerank"></div>
+    <div class="form-group"><label>ReRank 模型</label><input type="text" id="rerankModelName" value="Qwen/Qwen3-Reranker-4B"></div>
+    <div class="form-group"><label>ReRank top_n</label><input type="number" id="rerankTopN" value="20" min="1" max="100"></div>
+  </div>
+
+  <!-- 上下文输入 + Thought Engine: 多步模式 (Scene→Intent→Keywords, 3-step) 或 CoT 单步模式，可选单独运行 TE -->
+  <div class="input-column">
+    <h3>原始情境 & Thought Engine</h3>
+    <textarea id="contextInput" rows="4" placeholder="粘贴原始对话或当前情境。若启用 Thought Engine，此文本将用于生成场景/意图/关键词。同时也是感性轨道的默认查询文本。"></textarea>
+    <div class="toolbar" style="margin-top:12px;">
+      <div class="checkbox-group"><input type="checkbox" id="teEnabled"><label for="teEnabled" style="color:var(--accent-color)">启用 Thought Engine</label></div>
+      <div class="checkbox-group"><input type="checkbox" id="teMultiStep"><label for="teMultiStep" style="color:var(--rerank-color)">多步模式 (Step1→2→3)</label></div>
+      <button id="runTeBtn" class="btn-ghost" style="display:none;">单独运行 TE</button>
+    </div>
+    <div id="tePrompts" style="display:none; margin-top:12px;">
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Step1 Prompt (场景)</label>
+        <textarea id="teStep1Prompt" rows="2">分析以下对话的场景与上下文。只输出简洁的场景描述，不超过100字。&#10;&#10;{{chat_history}}</textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Step2 Prompt (意图)</label>
+        <textarea id="teStep2Prompt" rows="2">基于以下场景分析，推断用户的深层意图和需求。只输出意图描述，不超过100字。&#10;&#10;场景分析：{{scene_analysis}}&#10;&#10;对话：{{chat_history}}</textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Step3 Prompt (关键词)</label>
+        <textarea id="teStep3Prompt" rows="2">基于以下完整分析，将意图转化为精确的向量检索关键词。只输出关键词，用空格分隔，不超过30字。&#10;&#10;场景：{{scene_analysis}}&#10;意图：{{intent_analysis}}&#10;&#10;对话：{{chat_history}}</textarea>
+      </div>
+      <div class="form-group">
+        <label>CoT Prompt (单步模式)</label>
+        <textarea id="teCotPrompt" rows="3">你是一个记忆检索分析中枢。请按以下步骤思考：&#10;&#10;第一步-场景识别：分析最近对话中的时间/地点/角色状态/情节走向&#10;第二步-意图推断：基于场景，推断用户深层需求&#10;第三步-关键词输出：将意图转化为精确的向量检索关键词&#10;&#10;严格按格式输出：&#10;场景：... | 意图：... | 关键词：关键词1 关键词2&#10;&#10;最近对话：&#10;{{chat_history}}</textarea>
+      </div>
+    </div>
+    <div id="teOutput" style="display:none;"></div>
+  </div>
+
+  <!-- 双轨输入面板: 感性轨道 SENSE (完整句子/自然语言) 与 理性轨道 REASON (TE关键词/精确查询) 并发检索 -->
+  <div class="tracks-container">
+    <div class="track-panel">
+      <div class="track-header">
+        <h4>感性轨道 (RAW)</h4>
+        <span class="track-badge b-sense">SENSE</span>
+      </div>
+      <textarea id="senseInput" rows="4" placeholder="输入完整句子或段落进行语义检索。留空则使用上方原始情境。"></textarea>
+      <div class="checkbox-group" style="margin-top:10px;"><input type="checkbox" id="senseEnabled" checked><label for="senseEnabled" style="color:var(--sense-color)">启用感性轨道</label></div>
+    </div>
+    <div class="track-panel">
+      <div class="track-header">
+        <h4>理性轨道 (THOUGHT)</h4>
+        <span class="track-badge b-reason">REASON</span>
+      </div>
+      <textarea id="reasonInput" rows="4" placeholder="输入关键词或 TE 产出。留空则自动使用 TE 关键词（若启用 TE）。"></textarea>
+      <div class="checkbox-group" style="margin-top:10px;"><input type="checkbox" id="reasonEnabled" checked><label for="reasonEnabled" style="color:var(--reason-color)">启用理性轨道</label></div>
+    </div>
+  </div>
+
+  <!-- 策略参数: α 比例 (理性轨道占比)、预截断池大小 (merge 前最大条目)、最终结果数 (注入 Prompt 的条目数) -->
+  <div class="strategy-bar">
+    <div class="slider-wrap">
+      <label>α 比例 (理性占比)</label>
+      <div class="slider-labels"><span>0 全感性</span><span>0.5</span><span>1 全理性</span></div>
+      <input type="range" id="alphaSlider" min="0" max="1" step="0.05" value="0.6">
+      <div class="slider-value" id="alphaValue">0.60</div>
+    </div>
+    <div class="form-group">
+      <label>预截断池大小 (rerank_top_n)</label>
+      <input type="number" id="preLimit" value="20" min="1" max="100">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">混合去重前的最大条目数</div>
+    </div>
+    <div class="form-group">
+      <label>最终结果数 (max_results)</label>
+      <input type="number" id="maxResults" value="10" min="1" max="50">
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">最终注入 Prompt 的条目数</div>
+    </div>
+  </div>
+
+  <!-- 控制按钮: 运行完整流程 (全部 Stage)、清空结果 (重置所有可视化面板) -->
+  <div style="display:flex;gap:12px;margin-bottom:20px;">
+    <button id="launchBtn" class="btn-launch" style="flex:3;">运行完整流程</button>
+    <button id="clearBtn" class="btn-ghost" style="flex:1;">清空结果</button>
+  </div>
+  <div id="searchStatus" class="status-msg"></div>
+
+  <!-- 一键展开/折叠 -->
+  <div class="toolbar" style="justify-content:flex-end;">
+    <button id="expandAllBtn" class="btn-ghost">一键展开</button>
+    <button id="collapseAllBtn" class="btn-ghost">一键折叠</button>
+  </div>
+
+  <!-- 流程可视化时间线: 垂直步骤指示器，展示 Stage 0-6 的实时状态 (运行中/完成/错误)，每阶段可折叠展开 -->
+  <div class="timeline-wrap">
+    <div class="timeline-header"><h3>流程可视化时间线</h3></div>
+    <div class="timeline" id="mainTimeline">
+
+      <!-- Stage 0: Thought Engine — 意图分析，多步模式 (场景→意图→关键词) 或 CoT 模式 (链式思考单步输出) -->
+      <div class="timeline-step" id="step-te">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-te">
+            <span class="stage-title">Stage 0: Thought Engine 意图分析</span>
+            <span>
+              <span class="stage-meta" id="meta-te"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-te">
+            <div class="empty-state">未运行或 TE 已禁用。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 1: Dual Retrieval — 感性轨道 (自然语言) 与 理性轨道 (关键词) 并发查询本地 FAISS 向量库 -->
+      <div class="timeline-step" id="step-dual">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-dual">
+            <span class="stage-title">Stage 1: 双轨并发检索</span>
+            <span>
+              <span class="stage-meta" id="meta-dual"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-dual">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 2: Alpha Truncation — 按 α 比率分配配额: 理性轨道保留 preLimit×α 条, 感性轨道保留剩余，混合为统一池 -->
+      <div class="timeline-step" id="step-alpha">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-alpha">
+            <span class="stage-title">Stage 2: α 比例预截断</span>
+            <span>
+              <span class="stage-meta" id="meta-alpha"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-alpha">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 3: Dedup — Map 去重: 以条目文本为 key，重复的保留最高分，被剔除的单独展示 -->
+      <div class="timeline-step" id="step-dedup">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-dedup">
+            <span class="stage-title">Stage 3: 文本去重</span>
+            <span>
+              <span class="stage-meta" id="meta-dedup"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-dedup">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 4: Mixed Rerank — 交叉编码器对所有去重条目计算语义相关性，排序后对比原始分与 ReRank 分的变化 -->
+      <div class="timeline-step" id="step-rerank">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-rerank">
+            <span class="stage-title">Stage 4: 混合后统一 Rerank</span>
+            <span>
+              <span class="stage-meta" id="meta-rerank"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-rerank">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 5: Final Truncation — 按照 max_results 参数截取排序后的前 N 条，作为最终入选记忆 -->
+      <div class="timeline-step" id="step-final">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-final">
+            <span class="stage-title">Stage 5: 最终截断 & 排序</span>
+            <span>
+              <span class="stage-meta" id="meta-final"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-final">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 6: Prompt Assembly — 将最终记忆注入可配置模板 (默认/文风/设定/人设/剧情/上下文)，预览 AI 实际看到的文本 -->
+      <div class="timeline-step" id="step-prompt">
+        <div class="stage-box">
+          <div class="stage-header" data-target="stage-prompt">
+            <span class="stage-title">Stage 6: Prompt 组装预览</span>
+            <span>
+              <span class="stage-meta" id="meta-prompt"></span>
+              <span class="stage-toggle">&#9660;</span>
+            </span>
+          </div>
+          <div class="stage-content" id="stage-prompt">
+            <div class="empty-state">等待运行。</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 全局统计面板: 四宫格展示全链路关键指标 — 感性召回数、理性召回数、去重剔除数、最终入选数 -->
+  <div class="input-column" id="globalStatsPanel" style="display:none;">
+    <h3>全链路统计</h3>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-top:10px;">
+      <div style="background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px;padding:12px;text-align:center;">
+        <div style="font-family:var(--font-mono);font-size:22px;color:var(--accent-color);" id="statSense">0</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">感性召回</div>
+      </div>
+      <div style="background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px;padding:12px;text-align:center;">
+        <div style="font-family:var(--font-mono);font-size:22px;color:var(--reason-color);" id="statReason">0</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">理性召回</div>
+      </div>
+      <div style="background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px;padding:12px;text-align:center;">
+        <div style="font-family:var(--font-mono);font-size:22px;color:var(--overlap-color);" id="statDedup">0</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">去重剔除</div>
+      </div>
+      <div style="background:var(--bg-color);border:1px solid var(--border-color);border-radius:6px;padding:12px;text-align:center;">
+        <div style="font-family:var(--font-mono);font-size:22px;color:var(--success-color);" id="statFinal">0</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">最终入选</div>
+      </div>
+    </div>
+  </div>
+
+</div> <!-- /container -->
+<script>
+/**
+ * ArcFess FlowLab — Full Pipeline Simulation Engine
+ *
+ * Replicates the complete ArcFess memory retrieval pipeline in the browser:
+ *   1. Thought Engine (LLM → scene/intent/keywords)
+ *   2. Dual-track embedding + FAISS retrieval (SENSE natural language + REASON keywords)
+ *   3. Alpha ratio truncation (distributes preLimit between both tracks)
+ *   4. Text deduplication (Map-based, keeps highest-score duplicate)
+ *   5. Mixed cross-encoder rerank (re-scores merged pool via ReRank API)
+ *   6. Final truncation to max_results
+ *   7. Prompt assembly with configurable templates
+ *
+ * All API keys are encrypted in localStorage with PBKDF2 + AES-GCM.
+ */
+
+// ==================== Encryption ====================
+// localStorage key used for encrypted API key storage
+const STORAGE_KEY = 'arcfess_secure_key';
+
+/**
+ * Converts an ArrayBuffer to a Base64 string.
+ * Used to serialize encrypted binary data for localStorage.
+ * @param {ArrayBuffer} buffer
+ * @returns {string} Base64-encoded string
+ */
+function bufferToBase64(buffer) {
+  let binary = ''; const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return window.btoa(binary);
+}
+
+/**
+ * Converts a Base64 string back to an ArrayBuffer.
+ * Used to deserialize encrypted data from localStorage.
+ * @param {string} base64
+ * @returns {ArrayBuffer}
+ */
+function base64ToBuffer(base64) {
+  const binary = window.atob(base64); const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/**
+ * Encrypts plaintext with a user-provided password using PBKDF2 key derivation + AES-256-GCM.
+ * The result contains: [16-byte salt || 12-byte IV || ciphertext], Base64-encoded.
+ * @param {string} plaintext - The API key to encrypt
+ * @param {string} password - User-chosen encryption passphrase
+ * @returns {Promise<string>} Base64-encoded encrypted blob (salt + IV + ciphertext)
+ */
+async function encryptData(plaintext, password) {
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey("raw", enc.encode(password), {name:"PBKDF2"}, false, ["deriveKey"]);
+  const salt = window.crypto.getRandomValues(new Uint8Array(16)); // 16-byte random salt
+  const key = await window.crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:100000, hash:"SHA-256"}, keyMaterial, {name:"AES-GCM", length:256}, false, ["encrypt"]);
+  const iv = window.crypto.getRandomValues(new Uint8Array(12)); // 12-byte random IV for GCM
+  const encryptedContent = await window.crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(plaintext));
+  const encryptedBytes = new Uint8Array(encryptedContent);
+  // Pack: salt (16) + iv (12) + ciphertext
+  const combined = new Uint8Array(salt.byteLength + iv.byteLength + encryptedBytes.byteLength);
+  combined.set(salt, 0); combined.set(iv, salt.byteLength); combined.set(encryptedBytes, salt.byteLength + iv.byteLength);
+  return bufferToBase64(combined.buffer);
+}
+
+/**
+ * Decrypts data previously encrypted by encryptData().
+ * Extracts salt and IV from the combined buffer, re-derives the key, and decrypts.
+ * @param {string} b64 - Base64-encoded encrypted blob
+ * @param {string} password - Same passphrase used for encryption
+ * @returns {Promise<string>} Decrypted API key plaintext
+ */
+async function decryptData(b64, password) {
+  const combined = new Uint8Array(base64ToBuffer(b64));
+  const salt = combined.slice(0, 16), iv = combined.slice(16, 28), data = combined.slice(28);
+  const enc = new TextEncoder();
+  const keyMaterial = await window.crypto.subtle.importKey("raw", enc.encode(password), {name:"PBKDF2"}, false, ["deriveKey"]);
+  const key = await window.crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:100000, hash:"SHA-256"}, keyMaterial, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+  const decrypted = await window.crypto.subtle.decrypt({name:"AES-GCM", iv}, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+
+// ==================== UI Initialization ====================
+/**
+ * Main initialization: DOM loaded event handler.
+ * Sets up all UI bindings:
+ *   - Encrypted API key load/save/clear via localStorage
+ *   - Alpha slider live display
+ *   - Thought Engine toggle (show/hide prompts & run button)
+ *   - Collapsible stage panels (click header to toggle, expand/collapse all)
+ *   - Launch and Clear button bindings
+ */
+document.addEventListener('DOMContentLoaded', async () => {
+  // --- Encrypted API key management ---
+  const saved = localStorage.getItem(STORAGE_KEY);
+  const apiIn = document.getElementById('apiKey'), saveBtn = document.getElementById('saveKeyBtn'), clearBtn = document.getElementById('clearKeyBtn'), sec = document.getElementById('securityStatus');
+  if (saved) {
+    // Prompt user for password to decrypt the stored API key
+    const pw = prompt('ArcFess 内存防护已激活。\n请输入访问密码以解密 API Key：');
+    if (pw) { try { apiIn.value = await decryptData(saved, pw); sec.style.display='block'; saveBtn.style.display='none'; clearBtn.style.display='block'; } catch(e){ alert('解密失败'); } }
+  }
+  saveBtn.addEventListener('click', async () => {
+    const raw = apiIn.value.trim(); if (!raw) return alert('请先输入 API Key');
+    const pw = prompt('设置进入密码以加密保存：'); if (!pw) return;
+    try { localStorage.setItem(STORAGE_KEY, await encryptData(raw, pw)); sec.style.display='block'; sec.innerText='已加密保存'; saveBtn.style.display='none'; clearBtn.style.display='block'; } catch(e){ alert('加密失败'); }
+  });
+  clearBtn.addEventListener('click', () => { if(confirm('清除本地加密凭据？')){ localStorage.removeItem(STORAGE_KEY); apiIn.value=''; sec.style.display='none'; saveBtn.style.display='block'; clearBtn.style.display='none'; } });
+
+  // --- Alpha slider: update displayed value in real time ---
+  const slider = document.getElementById('alphaSlider'), val = document.getElementById('alphaValue');
+  slider.addEventListener('input', () => val.innerText = parseFloat(slider.value).toFixed(2));
+
+  // --- Thought Engine toggle: show/hide prompts and standalone run button ---
+  const teCb = document.getElementById('teEnabled'), tePrompts = document.getElementById('tePrompts'), teOut = document.getElementById('teOutput'), runTe = document.getElementById('runTeBtn');
+  teCb.addEventListener('change', () => { tePrompts.style.display = teCb.checked ? 'block' : 'none'; runTe.style.display = teCb.checked ? 'inline-block' : 'none'; });
+  runTe.addEventListener('click', async () => { const out = await runThoughtEngine(document.getElementById('contextInput').value.trim() || document.getElementById('senseInput').value.trim()); renderTeOutput(out); });
+
+  // --- Collapsible stage panels: click header to toggle content visibility ---
+  // Each stage-header has a data-target attr pointing to its stage-content div.
+  // Toggling also rotates the arrow indicator via the .expanded class.
+  document.querySelectorAll('.stage-header').forEach(h => {
+    h.addEventListener('click', () => {
+      const target = document.getElementById(h.dataset.target);
+      const toggle = h.querySelector('.stage-toggle');
+      target.classList.toggle('expanded');
+      toggle.classList.toggle('expanded');
+    });
+  });
+
+  // Expand/collapse all stages
+  document.getElementById('expandAllBtn').addEventListener('click', () => {
+    document.querySelectorAll('.stage-content').forEach(el => el.classList.add('expanded'));
+    document.querySelectorAll('.stage-toggle').forEach(el => el.classList.add('expanded'));
+  });
+  document.getElementById('collapseAllBtn').addEventListener('click', () => {
+    document.querySelectorAll('.stage-content').forEach(el => el.classList.remove('expanded'));
+    document.querySelectorAll('.stage-toggle').forEach(el => el.classList.remove('expanded'));
+  });
+
+  // Main action buttons
+  document.getElementById('launchBtn').addEventListener('click', runFullFlow);
+  document.getElementById('clearBtn').addEventListener('click', clearAll);
+});
+
+/**
+ * Resets all stage panels, metadata, stats, TE output, and status messages to their initial state.
+ * Collapses all expanded stage panels.
+ */
+function clearAll() {
+  ['stage-te','stage-dual','stage-alpha','stage-dedup','stage-rerank','stage-final','stage-prompt'].forEach(id => {
+    document.getElementById(id).innerHTML = '<div class="empty-state">等待运行。</div>';
+    document.getElementById(id).classList.remove('expanded');
+  });
+  document.querySelectorAll('.stage-toggle').forEach(el => el.classList.remove('expanded'));
+  document.getElementById('globalStatsPanel').style.display = 'none';
+  document.getElementById('searchStatus').innerHTML = '';
+  document.getElementById('teOutput').style.display = 'none';
+  document.getElementById('teOutput').innerHTML = '';
+}
+
+/**
+ * Updates the visual state of a timeline step dot.
+ * @param {string} id - Stage identifier (e.g., 'te', 'dual', 'alpha', 'dedup', 'rerank', 'final', 'prompt')
+ * @param {string} status - CSS class: 'active' (blue pulsing), 'completed' (green), 'error' (red), or falsy to clear
+ */
+function setStepStatus(id, status) {
+  const step = document.getElementById('step-' + id);
+  step.classList.remove('active','completed','error');
+  if (status) step.classList.add(status);
+}
+
+// ==================== API Helpers ====================
+/**
+ * Calls the Embedding API to convert text into a dense vector.
+ * Used by both tracks (SENSE and REASON) to generate query vectors for FAISS retrieval.
+ * @param {string} text - The text to embed
+ * @returns {Promise<number[]>} Embedding vector (float array)
+ * @throws {Error} If the API call fails or returns an invalid response
+ */
+async function getEmbedding(text) {
+  const ep = document.getElementById('embedApiUrl').value.trim();
+  const key = document.getElementById('apiKey').value.trim();
+  const model = document.getElementById('modelName').value.trim();
+  const res = await fetch(ep, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body: JSON.stringify({model, input: text}) });
+  if (!res.ok) throw new Error(`Embedding ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  if (!data.data?.[0]?.embedding) throw new Error('无效 Embedding 响应');
+  return data.data[0].embedding;
+}
+
+/**
+ * Queries the local FAISS vector database with an embedding vector.
+ * Supports optional collection filtering (comma-separated collection names).
+ * @param {number[]} vector - The query embedding vector
+ * @param {number} k - Number of nearest neighbors to retrieve
+ * @returns {Promise<Array>} Array of result objects with {id, text, score, metadata, ...}
+ */
+async function queryLocalDB(vector, k) {
+  const url = document.getElementById('localUrl').value.trim();
+  const cols = document.getElementById('collections').value.trim();
+  const body = { vector, k };
+  if (cols) body.collections = cols.split(',').map(s => s.trim()).filter(Boolean);
+  const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`FAISS ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.results || [];
+}
+
+/**
+ * Calls the ReRank API (cross-encoder) to re-score documents against a query.
+ * Used in Stage 4 to re-order the deduplicated pool.
+ * @param {string} query - The query text (typically the SENSE input + TE keywords)
+ * @param {string[]} texts - Array of document texts to re-rank
+ * @returns {Promise<Array>} Array of {index, relevance_score} objects from the API
+ */
+async function performRerank(query, texts) {
+  const ep = document.getElementById('rerankApiUrl').value.trim();
+  const key = document.getElementById('apiKey').value.trim();
+  const model = document.getElementById('rerankModelName').value.trim();
+  const res = await fetch(ep, { method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`}, body: JSON.stringify({model, query, documents: texts}) });
+  if (!res.ok) throw new Error(`Rerank ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.results || [];
+}
+
+/**
+ * Calls the LLM through the Thought Proxy (local relay → target API).
+ * The proxy forwards the request to the actual LLM endpoint, handling auth and SSL.
+ * Used by the Thought Engine for scene/intent/keyword generation.
+ * @param {string} promptText - The full prompt to send to the LLM
+ * @returns {Promise<string>} The LLM's response text (content from the first choice)
+ */
+async function callLLM(promptText) {
+  const proxyUrl = document.getElementById('thoughtProxyUrl').value.trim();
+  const targetUrl = document.getElementById('llmUrl').value.trim();
+  const key = document.getElementById('apiKey').value.trim();
+  const model = document.getElementById('llmModel').value.trim();
+  const res = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: targetUrl,
+      api_key: key,
+      model: model,
+      messages: [{ role: 'user', content: promptText }],
+      temperature: 0.3,
+      max_tokens: 4096,
+      timeout: 90,
+      verify_ssl: false
+    })
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(`ThoughtProxy ${res.status}: ${errData.error || await res.text()}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || data.choices?.[0]?.content || '';
+}
+
+// ==================== Thought Engine ====================
+/**
+ * Runs the Thought Engine to analyze chat history and extract retrieval keywords.
+ *
+ * Two modes (controlled by teMultiStep checkbox):
+ *   - Multi-step mode (teMultiStep checked):
+ *       Step 1: Analyze scene/context from the chat history
+ *       Step 2: Infer user intent based on scene + chat history
+ *       Step 3: Generate precise vector search keywords from scene + intent
+ *     Each step calls the LLM independently via callLLM(), feeding the previous step's output.
+ *     The final keywords come from Step 3, falling back to intent or scene if empty.
+ *
+ *   - CoT mode (single-step, default):
+ *       Sends a single Chain-of-Thought prompt that asks the LLM to internally reason
+ *       through scene → intent → keywords in one response.
+ *       Keywords are extracted from the output by searching for the "关键词:" marker.
+ *       If extraction fails, the entire output is used as keywords.
+ *
+ * @param {string} chatHistory - The raw conversation/context text
+ * @returns {Promise<Object|null>} {mode, finalKeywords, ...} or null if no input
+ */
+async function runThoughtEngine(chatHistory) {
+  if (!chatHistory) return null;
+  const isMulti = document.getElementById('teMultiStep').checked;
+
+  if (isMulti) {
+    // --- Multi-step mode: three sequential LLM calls ---
+    // Step 1: Scene analysis — replace {{chat_history}} placeholder with actual context
+    const p1 = document.getElementById('teStep1Prompt').value.replace(/{{chat_history}}/g, chatHistory);
+    const scene = await callLLM(p1);
+    // Step 2: Intent inference — uses scene_analysis from Step 1 as context
+    const p2 = document.getElementById('teStep2Prompt').value.replace(/{{scene_analysis}}/g, scene).replace(/{{chat_history}}/g, chatHistory);
+    const intent = await callLLM(p2);
+    // Step 3: Keyword extraction — uses both scene and intent output
+    const p3 = document.getElementById('teStep3Prompt').value.replace(/{{scene_analysis}}/g, scene).replace(/{{intent_analysis}}/g, intent).replace(/{{chat_history}}/g, chatHistory);
+    const keywords = await callLLM(p3);
+    // Fallback chain: keywords → intent → scene (whichever is non-empty)
+    return { mode:'multi', scene, intent, keywords, finalKeywords: keywords || intent || scene };
+  } else {
+    // --- CoT mode: single prompt with internal reasoning ---
+    const p = document.getElementById('teCotPrompt').value.replace(/{{chat_history}}/g, chatHistory);
+    const result = await callLLM(p);
+    // Extract keywords by finding the "关键词:" marker in the LLM output
+    const kwIdx = result.search(/关键词[：:]/);
+    let extracted = result;
+    if (kwIdx !== -1) {
+      const k = result.substring(kwIdx).replace(/^关键词[：:]\s*/, '').trim();
+      // Only use extracted portion if it looks like reasonable keywords (under 200 chars)
+      if (k.length > 0 && k.length < 200) extracted = k;
+    }
+    return { mode:'cot', fullOutput: result, finalKeywords: extracted };
+  }
+}
+
+/**
+ * Renders the Thought Engine output into the TE output panel.
+ * Multi-step mode shows each step (scene, intent, keywords) in labeled blocks.
+ * CoT mode shows the full LLM output with the extracted keywords highlighted.
+ * @param {Object|null} out - Result object from runThoughtEngine()
+ */
+function renderTeOutput(out) {
+  const box = document.getElementById('teOutput');
+  box.style.display = 'block';
+  if (!out) { box.innerHTML = '<div class="empty-state">TE 未产出。</div>'; return; }
+  let html = '<div class="te-output-box">';
+  if (out.mode === 'multi') {
+    // Multi-step: display each step's output with labels
+    html += `<div class="te-step"><div class="te-label">Step 1 — 场景</div><div>${escapeHtml(out.scene || '(无)')}</div></div>`;
+    html += `<div class="te-step"><div class="te-label">Step 2 — 意图</div><div>${escapeHtml(out.intent || '(无)')}</div></div>`;
+    html += `<div class="te-step"><div class="te-label">Step 3 — 关键词</div><div style="color:var(--accent-color);font-weight:600;">${escapeHtml(out.keywords || '(无)')}</div></div>`;
+    html += `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">最终使用关键词: <span style="color:var(--success-color)">${escapeHtml(out.finalKeywords)}</span></div>`;
+  } else {
+    // CoT mode: show full output + extracted keywords
+    html += `<div class="te-step"><div class="te-label">CoT 完整输出</div><div style="white-space:pre-wrap;">${escapeHtml(out.fullOutput)}</div></div>`;
+    html += `<div style="margin-top:8px;font-size:12px;color:var(--text-muted);">提取关键词: <span style="color:var(--success-color)">${escapeHtml(out.finalKeywords)}</span></div>`;
+  }
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+// ==================== Flow Orchestration ====================
+/**
+ * Main pipeline orchestrator — runs all stages sequentially.
+ *
+ * Full flow (8 stages):
+ *   Stage 0: Thought Engine — analyze context, extract keywords for REASON track
+ *   Stage 1: Dual-track retrieval — concurrently query FAISS with SENSE + REASON embeddings
+ *   Stage 2: Alpha truncation — distribute the preLimit quota between tracks by alpha ratio
+ *   Stage 3: Deduplication — remove duplicate text entries, keeping the highest score
+ *   Stage 4: Mixed rerank — re-score the deduplicated pool via cross-encoder ReRank API
+ *   Stage 5: Final truncation — slice to max_results
+ *   Stage 6: Prompt assembly — inject memory texts into configurable XML template
+ *
+ * On any stage error, the flow aborts gracefully and reports the error.
+ * On ReRank failure (Stage 4), the flow continues using pre-rerank scores (ArcFess behavior).
+ * Final stats are displayed in the global stats panel.
+ */
+async function runFullFlow() {
+  // --- Pre-flight validation ---
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) return alert('请提供 API Key');
+
+  const context = document.getElementById('contextInput').value.trim();
+  let senseText = document.getElementById('senseInput').value.trim() || context;
+  const senseEnabled = document.getElementById('senseEnabled').checked;
+  const reasonEnabled = document.getElementById('reasonEnabled').checked;
+
+  if (!senseEnabled && !reasonEnabled) return alert('至少启用一个轨道');
+  if (senseEnabled && !senseText) return alert('感性轨道已启用但无查询文本');
+
+  // --- Lock UI during execution ---
+  const btn = document.getElementById('launchBtn');
+  const status = document.getElementById('searchStatus');
+  btn.disabled = true; btn.innerText = '流程运行中...';
+  status.innerHTML = '<span class="warning-text">正在执行 Stage 0/6...</span>';
+  clearAll();
+
+  const t0 = performance.now();
+  let teResult = null, kimiKeywords = null;
+
+  // ======== Stage 0: Thought Engine (intent analysis) ========
+  setStepStatus('te', 'active');
+  if (document.getElementById('teEnabled').checked) {
+    try {
+      teResult = await runThoughtEngine(context || senseText);
+      kimiKeywords = teResult.finalKeywords;
+      renderTeOutput(teResult);
+      // Auto-fill REASON track input with TE keywords if empty
+      if (!document.getElementById('reasonInput').value.trim() && kimiKeywords) {
+        document.getElementById('reasonInput').value = kimiKeywords;
+      }
+      setStepStatus('te', 'completed');
+      status.innerHTML = '<span class="warning-text">Stage 0 完成，正在执行 Stage 1/6...</span>';
+    } catch (e) {
+      setStepStatus('te', 'error');
+      status.innerHTML = `<span class="error-text">TE 失败: ${escapeHtml(e.message)}</span>`;
+      btn.disabled = false; btn.innerText = '运行完整流程'; return;
+    }
+  } else {
+    document.getElementById('stage-te').innerHTML = '<div class="empty-state">Thought Engine 已禁用。</div>';
+    setStepStatus('te', 'completed');
+  }
+
+  let reasonText = document.getElementById('reasonInput').value.trim();
+
+  // ======== Stage 1: Dual-track concurrent retrieval ========
+  // Both SENSE (natural language) and REASON (keyword) tracks query FAISS in parallel
+  setStepStatus('dual', 'active');
+  let senseResults = [], reasonResults = [];
+  try {
+    const promises = [];
+    if (senseEnabled && senseText) promises.push(probeTrack(senseText, 'RAW'));
+    else promises.push(Promise.resolve([]));
+    if (reasonEnabled && reasonText) promises.push(probeTrack(reasonText, 'THOUGHT'));
+    else promises.push(Promise.resolve([]));
+
+    [senseResults, reasonResults] = await Promise.all(promises);
+    renderStageDual(senseResults, reasonResults);
+    setStepStatus('dual', 'completed');
+    status.innerHTML = '<span class="warning-text">Stage 1 完成，正在执行 Stage 2/6...</span>';
+  } catch (e) {
+    setStepStatus('dual', 'error');
+    status.innerHTML = `<span class="error-text">双轨检索失败: ${escapeHtml(e.message)}</span>`;
+    btn.disabled = false; btn.innerText = '运行完整流程'; return;
+  }
+
+  // ======== Stage 2: Alpha truncation (quota distribution) ========
+  setStepStatus('alpha', 'active');
+  const alpha = parseFloat(document.getElementById('alphaSlider').value);
+  const preLimit = parseInt(document.getElementById('preLimit').value, 10);
+  const mixedPool = alphaTruncate(senseResults, reasonResults, alpha, preLimit);
+  renderStageAlpha(mixedPool, alpha, preLimit, senseResults.length, reasonResults.length);
+  setStepStatus('alpha', 'completed');
+  status.innerHTML = '<span class="warning-text">Stage 2 完成，正在执行 Stage 3/6...</span>';
+
+  // ======== Stage 3: Text deduplication ========
+  // Removes duplicate entries (same text key), retaining the highest-scored copy.
+  // Removed duplicates are shown in red in the visualization.
+  setStepStatus('dedup', 'active');
+  const dedupResult = deduplicatePool(mixedPool);
+  const sortedPool = [...dedupResult.unique].sort((a, b) => b.score - a.score);
+  renderStageDedup(dedupResult, sortedPool.length);
+  setStepStatus('dedup', 'completed');
+  status.innerHTML = '<span class="warning-text">Stage 3 完成，正在执行 Stage 4/6...</span>';
+
+  // ======== Stage 4: Mixed cross-encoder rerank ========
+  // If TE keywords are available, they augment the query for better rerank relevance.
+  // On failure: fall back to pre-rerank scores (ArcFess production behavior).
+  setStepStatus('rerank', 'active');
+  let rerankedPool = sortedPool;
+  let rerankQueryText = senseText;
+  if (kimiKeywords) rerankQueryText = `${senseText || reasonText} [意图:${kimiKeywords}]`;
+
+  let rerankApplied = false;
+  let rerankError = null;
+  if (sortedPool.length > 0 && document.getElementById('rerankApiUrl').value.trim()) {
+    try {
+      rerankedPool = await runMixedRerank(rerankQueryText, sortedPool);
+      rerankApplied = true;
+    } catch (e) {
+      rerankError = e.message;
+      console.warn('[FlowLab] Rerank failed, falling back to pre-rerank pool:', e);
+      // ArcFess 行为：Rerank 失败时回退到原始排序结果，不中断流程
+    }
+  }
+  renderStageRerank(sortedPool, rerankedPool, rerankQueryText, rerankApplied, rerankError);
+  setStepStatus('rerank', 'completed');
+  if (rerankError) {
+    status.innerHTML = `<span class="warning-text">Stage 4 完成 (Rerank 失败已回退: ${escapeHtml(rerankError)})</span>`;
+  } else {
+    status.innerHTML = '<span class="warning-text">Stage 4 完成，正在执行 Stage 5/6...</span>';
+  }
+
+  // ======== Stage 5: Final truncation to max_results ========
+  setStepStatus('final', 'active');
+  const maxResults = parseInt(document.getElementById('maxResults').value, 10);
+  const finalResults = rerankedPool.slice(0, maxResults);
+  renderStageFinal(finalResults);
+  setStepStatus('final', 'completed');
+  status.innerHTML = '<span class="warning-text">Stage 5 完成，正在执行 Stage 6/6...</span>';
+
+  // ======== Stage 6: Prompt assembly preview ========
+  setStepStatus('prompt', 'active');
+  renderStagePrompt(finalResults);
+  setStepStatus('prompt', 'completed');
+
+  // ======== Final: Global pipeline stats ========
+  document.getElementById('globalStatsPanel').style.display = 'block';
+  document.getElementById('statSense').innerText = senseResults.length;
+  document.getElementById('statReason').innerText = reasonResults.length;
+  document.getElementById('statDedup').innerText = dedupResult.removed.length;
+  document.getElementById('statFinal').innerText = finalResults.length;
+
+  const dur = (performance.now() - t0).toFixed(0);
+  status.innerHTML = `<span class="success-text">全链路完成，总耗时 ${dur}ms</span>`;
+  btn.disabled = false; btn.innerText = '运行完整流程';
+}
+
+/**
+ * Probes a single retrieval track: embeds the query text, queries the FAISS DB,
+ * and tags all results with their source track label.
+ *
+ * @param {string} text - The query text (natural language for SENSE, keywords for REASON)
+ * @param {string} tag - Source label: 'RAW' for SENSE track, 'THOUGHT' for REASON track
+ * @returns {Promise<Array>} Array of result objects with added sourceTag, rawScore, originalScore fields
+ */
+async function probeTrack(text, tag) {
+  const vector = await getEmbedding(text);
+  // Fetch 2× preLimit for safety — alpha truncation will later trim this down
+  const topK = parseInt(document.getElementById('preLimit').value, 10) * 2;
+  let results = await queryLocalDB(vector, topK);
+  // Enrich each result with tracking metadata
+  results = results.map(r => ({ ...r, sourceTag: tag, rawScore: r.score, originalScore: r.score }));
+  return results;
+}
+
+/**
+ * Alpha Truncation Algorithm:
+ * Distributes the preLimit quota between SENSE (感性) and REASON (理性) tracks
+ * based on the alpha ratio (α = REASON proportion).
+ *
+ * Algorithm steps:
+ *   1. Sort each track's results by score descending (highest first).
+ *   2. Calculate reasonQuota = round(preLimit × α) and senseQuota = preLimit - reasonQuota.
+ *   3. Take top reasonQuota from REASON + top senseQuota from SENSE.
+ *   4. If the combined pool is still under preLimit (e.g., one track had fewer results),
+ *      pad with additional SENSE results from beyond senseQuota.
+ *
+ * @param {Array} sense - SENSE track results
+ * @param {Array} reason - REASON track results
+ * @param {number} alpha - Alpha ratio (0 = all SENSE, 1 = all REASON)
+ * @param {number} preLimit - Maximum pool size before dedup
+ * @returns {Array} Merged and truncated pool
+ */
+function alphaTruncate(sense, reason, alpha, preLimit) {
+  sense.sort((a, b) => b.score - a.score);
+  reason.sort((a, b) => b.score - a.score);
+  // Calculate per-track quotas from alpha ratio
+  const reasonQuota = Math.round(preLimit * alpha);
+  const senseQuota = preLimit - reasonQuota;
+  // Merge: take top from each track up to their respective quotas
+  let pool = [...reason.slice(0, reasonQuota), ...sense.slice(0, senseQuota)];
+  // Pad with extra SENSE results if the pool is still below preLimit
+  if (pool.length < preLimit) {
+    const extra = sense.slice(senseQuota, senseQuota + (preLimit - pool.length));
+    pool.push(...extra);
+  }
+  return pool;
+}
+
+/**
+ * Deduplicate Pool Algorithm (Map-based):
+ * Removes duplicate entries from the merged pool by using the text content as the dedup key.
+ *
+ * Algorithm:
+ *   - Uses a Map<string, item> where the key is the result's text content.
+ *   - When a duplicate key is encountered, compares scores:
+ *       * If new item's score > existing item's score → replace, log old item as removed
+ *       * Otherwise → log new item as removed (replacedBy reference)
+ *   - Only the highest-scoring instance of each unique text survives.
+ *
+ * This ensures that when SENSE and REASON tracks return the same memory chunk,
+ * only the version with the higher similarity score is kept.
+ *
+ * @param {Array} pool - The merged pool after alpha truncation
+ * @returns {{unique: Array, removed: Array}} Unique items + removed duplicates with replacedBy info
+ */
+function deduplicatePool(pool) {
+  const unique = new Map(), removed = [];
+  pool.forEach(item => {
+    const key = item.text; // Text content is the dedup key
+    if (!unique.has(key)) { unique.set(key, item); }
+    else {
+      const existing = unique.get(key);
+      // Keep the item with the higher score, log the loser as removed
+      if (item.score > existing.score) { removed.push({...existing, replacedBy: item}); unique.set(key, item); }
+      else { removed.push({...item, replacedBy: existing}); }
+    }
+  });
+  return { unique: Array.from(unique.values()), removed };
+}
+
+/**
+ * Mixed Rerank:
+ * Calls the cross-encoder ReRank API to re-score all deduplicated items against the query.
+ *
+ * Algorithm:
+ *   1. Extract text array from pool, send to ReRank API with the query.
+ *   2. Build an indexed copy of the pool (preserving original positions).
+ *   3. For each rerank result: find the matching original item by index, apply the new
+ *      relevance_score as the item's score, mark it as isReranked: true, and store the
+ *      original_score for comparison.
+ *   4. For items NOT present in the rerank results (e.g., API truncated them):
+ *      keep them with their original score — they maintain their position in the pool.
+ *   5. Sort final results by score descending.
+ *
+ * What happens when an item is not in rerank results:
+ *   The rerank API may return fewer results than requested. Unmatched items are preserved
+ *   in the result map with their original scores, so they're not lost from the pipeline.
+ *
+ * @param {string} query - Query text for the rerank API (may include TE keywords)
+ * @param {Array} pool - Deduplicated and sorted pool of results
+ * @returns {Promise<Array>} Re-ranked pool, sorted by new scores descending
+ */
+async function runMixedRerank(query, pool) {
+  const texts = pool.map(r => r.text);
+  const scores = await performRerank(query, texts);
+  // Index pool items with their original array position for matching rerank results
+  const indexed = pool.map((r, i) => ({...r, _rerank_index: i}));
+  const resultMap = new Map();
+  // Apply rerank scores: match by result index, overwrite score fields
+  scores.forEach(s => {
+    const idx = s.index;
+    if (indexed[idx]) {
+      resultMap.set(idx, {
+        ...indexed[idx],
+        original_score: indexed[idx].score,   // Preserve pre-rerank score for comparison
+        rerank_score: s.relevance_score ?? s.score,
+        score: s.relevance_score ?? s.score,   // Replace score with rerank relevance
+        isReranked: true
+      });
+    }
+  });
+  // Preserve items that weren't covered by rerank results with their original score
+  indexed.forEach((r, i) => { if (!resultMap.has(i)) resultMap.set(i, r); });
+  return Array.from(resultMap.values()).sort((a, b) => b.score - a.score);
+}
+
+// ==================== Rendering ====================
+/**
+ * Escapes HTML special characters in a string to prevent XSS when injecting
+ * LLM output or DB content into innerHTML.
+ * @param {string} u - Untrusted string
+ * @returns {string} HTML-escaped string
+ */
+function escapeHtml(u) {
+  return u.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+}
+
+/**
+ * Renders a single memory card with metadata, scores, and source tag coloring.
+ * Handles both regular results and reranked results (shows original + rerank scores).
+ *
+ * Score display logic:
+ *   - If isReranked: shows "ReRank: X.XXXX (原: Y.YYYY)"
+ *   - Otherwise: shows "相似度: X.XXXX" (the raw cosine similarity)
+ *
+ * @param {Object} res - Result object with text, score, sourceTag, metadata, etc.
+ * @param {number} index - 0-based position in the current display list
+ * @param {Object} [opts] - Options (isDedup for dedup-specific styling)
+ * @returns {string} HTML string for the memory card
+ */
+function renderMemoryCard(res, index, opts={}) {
+  // Determine tag color and label based on source track
+  const tagColor = res.sourceTag === 'RAW' ? 'var(--sense-color)' : (res.sourceTag === 'THOUGHT' ? 'var(--reason-color)' : 'var(--text-muted)');
+  const tagLabel = res.sourceTag === 'RAW' ? 'SENSE' : (res.sourceTag === 'THOUGHT' ? 'REASON' : 'MIX');
+  const dedupCls = opts.isDedup ? 'tag-dedup' : (res.sourceTag === 'RAW' ? 'tag-sense' : 'tag-reason');
+  // Build score display: reranked items show both new and original score
+  let scoreHtml = `相似度: ${res.score.toFixed(4)}`;
+  if (res.isReranked) {
+    scoreHtml = `ReRank: ${res.score.toFixed(4)} (原: ${res.original_score !== undefined ? res.original_score.toFixed(4) : (res.originalScore !== undefined ? res.originalScore.toFixed(4) : '-')})`;
+  }
+  // Build human-readable metadata line from available fields
+  let meta = '未知';
+  if (res.metadata) {
+    if (res.metadata.chapter_title) meta = `章节: ${res.metadata.chapter_title}`;
+    else if (res.metadata.index !== undefined) meta = `楼层: ${res.metadata.index}`;
+    else if (res.metadata.name) meta = `文件: ${res.metadata.name}`;
+    else if (res.metadata.collection_id) meta = `集合: ${res.metadata.collection_id}`;
+  }
+  return `
+    <div class="memory-card ${dedupCls}">
+      <div class="memory-meta">
+        <span><strong>#${index + 1}</strong> | ${scoreHtml}</span>
+        <span style="color:${tagColor};font-family:var(--font-mono);font-size:11px;">${tagLabel}</span>
+      </div>
+      <div class="memory-meta"><span>${meta}</span><span>ID: ${res.id ? String(res.id).substring(0,8)+'...' : 'N/A'}</span></div>
+      <div class="memory-text">${escapeHtml(res.text)}</div>
+      <div class="score-panel">
+        <div class="score-row"><span>原始分</span><span class="val">${res.rawScore !== undefined ? res.rawScore.toFixed(4) : (res.original_score !== undefined ? res.original_score.toFixed(4) : res.score.toFixed(4))}</span></div>
+        <div class="score-row"><span>最终分</span><span class="val">${res.score.toFixed(4)}</span></div>
+        <div class="score-row"><span>来源</span><span class="val" style="color:${tagColor}">${tagLabel}</span></div>
+        <div class="score-row"><span>排名</span><span class="val">#${index + 1}</span></div>
+      </div>
+    </div>`;
+}
+
+/**
+ * Renders Stage 1: Dual-track retrieval results side-by-side.
+ * Left column: SENSE (感性) results, Right column: REASON (理性) results.
+ * @param {Array} sense - SENSE track results
+ * @param {Array} reason - REASON track results
+ */
+function renderStageDual(sense, reason) {
+  let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">';
+  html += '<div><h4 style="color:var(--sense-color)">感性轨道召回</h4>';
+  if (sense.length === 0) html += '<div class="empty-state">未启用或无结果。</div>';
+  else sense.forEach((r, i) => html += renderMemoryCard(r, i));
+  html += '</div><div><h4 style="color:var(--reason-color)">理性轨道召回</h4>';
+  if (reason.length === 0) html += '<div class="empty-state">未启用或无结果。</div>';
+  else reason.forEach((r, i) => html += renderMemoryCard(r, i));
+  html += '</div></div>';
+  document.getElementById('stage-dual').innerHTML = html;
+  document.getElementById('meta-dual').innerText = `感${sense.length} | 理${reason.length}`;
+}
+
+/**
+ * Renders Stage 2: Alpha-truncated mixed pool.
+ * Shows the alpha ratio, preLimit, per-track quotas, and the merged pool.
+ * @param {Array} pool - The mixed pool after alpha truncation
+ * @param {number} alpha - Alpha ratio value
+ * @param {number} preLimit - Pre-dedup size limit
+ * @param {number} sCount - Original SENSE track result count
+ * @param {number} rCount - Original REASON track result count
+ */
+function renderStageAlpha(pool, alpha, preLimit, sCount, rCount) {
+  const reasonQuota = Math.round(preLimit * alpha);
+  const senseQuota = preLimit - reasonQuota;
+  let html = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">α=${alpha.toFixed(2)} | 预截断=${preLimit} | 理性配额=${reasonQuota} | 感性配额=${senseQuota}</div>`;
+  html += '<div style="max-height:500px;overflow-y:auto;">';
+  if (pool.length === 0) html += '<div class="empty-state">混合池为空。</div>';
+  else pool.forEach((r, i) => html += renderMemoryCard(r, i));
+  html += '</div>';
+  document.getElementById('stage-alpha').innerHTML = html;
+  document.getElementById('meta-alpha').innerText = `${pool.length} 条`;
+}
+
+/**
+ * Renders Stage 3: Deduplication results.
+ * Shows removed duplicates (with replacedBy reference) and the unique sorted pool.
+ * @param {Object} dedup - Result from deduplicatePool() with .unique and .removed arrays
+ * @param {number} uniqueCount - Number of unique items after dedup
+ */
+function renderStageDedup(dedup, uniqueCount) {
+  let html = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">去重后: ${uniqueCount} 条 | 被剔除: ${dedup.removed.length} 条</div>`;
+  // Section: Removed duplicates — shown in red with the covering item's score
+  if (dedup.removed.length > 0) {
+    html += '<div style="margin-bottom:10px;font-weight:600;font-size:13px;">被去重剔除的条目：</div>';
+    html += '<div style="max-height:300px;overflow-y:auto;">';
+    dedup.removed.forEach((r, i) => {
+      html += `<div class="memory-card tag-dedup">
+        <div class="memory-meta"><span><strong>已剔除 #${i+1}</strong></span><span>原始分: ${r.score.toFixed(4)}</span></div>
+        <div class="memory-text">${escapeHtml(r.text.substring(0, 120))}${r.text.length>120?'...':''}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">被更高分同名条目覆盖 (覆盖者分: ${r.replacedBy.score.toFixed(4)})</div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  // Section: Unique sorted pool — the survivors
+  html += '<div style="margin-top:10px;font-weight:600;font-size:13px;">去重后全局排序池：</div>';
+  html += '<div style="max-height:300px;overflow-y:auto;">';
+  dedup.unique.sort((a,b)=>b.score-a.score).forEach((r,i)=>html+=renderMemoryCard(r,i));
+  html += '</div>';
+  document.getElementById('stage-dedup').innerHTML = html;
+  document.getElementById('meta-dedup').innerText = `剔${dedup.removed.length}`;
+}
+
+/**
+ * Renders Stage 4: Rerank results.
+ * Three cases:
+ *   1. Error: Show warning + fallback to pre-rerank order
+ *   2. Not applied: Show "skipped" message (no ReRank API configured)
+ *   3. Success: Show comparison table (original vs. rerank score with delta) + reranked cards
+ *
+ * @param {Array} before - Pool before rerank
+ * @param {Array} after - Pool after rerank (or same as before on error/skip)
+ * @param {string} queryText - The query text sent to the rerank API
+ * @param {boolean} applied - Whether rerank was actually performed
+ * @param {string|null} error - Error message if rerank failed
+ */
+function renderStageRerank(before, after, queryText, applied, error) {
+  let html = '';
+  if (error) {
+    // Rerank failed: show error and fallback to original order (ArcFess behavior)
+    html = `<div style="color:var(--warning-color);font-size:13px;margin-bottom:10px;">&#9888; Rerank 调用失败，已回退到原始排序结果: ${escapeHtml(error)}</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Rerank 查询文本: ${escapeHtml(queryText)}</div>`;
+    html += '<div style="margin-top:10px;"><h4>回退结果（原始排序）</h4>';
+    after.forEach((r, i) => html += renderMemoryCard(r, i));
+    html += '</div>';
+  } else if (!applied) {
+    html = '<div class="empty-state">ReRank API 未配置或已跳过。</div>';
+  } else {
+    // Successful rerank: show comparison table + reranked cards
+    html = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">Rerank 查询文本: ${escapeHtml(queryText)}</div>`;
+    html += '<table class="comparison-table"><thead><tr><th>排名</th><th>ID</th><th>原始分</th><th>ReRank分</th><th>变化</th></tr></thead><tbody>';
+    after.forEach((r, i) => {
+      const orig = r.original_score !== undefined ? r.original_score.toFixed(4) : (r.originalScore !== undefined ? r.originalScore.toFixed(4) : '-');
+      const delta = (r.original_score !== undefined && r.score) ? (r.score - r.original_score).toFixed(4) : '-';
+      // Color: green for score increase, red for decrease, muted for no change
+      const deltaColor = delta !== '-' ? (parseFloat(delta) > 0 ? 'var(--success-color)' : (parseFloat(delta) < 0 ? 'var(--danger-color)' : 'var(--text-muted)')) : 'var(--text-muted)';
+      html += `<tr><td>#${i+1}</td><td>${r.id ? String(r.id).substring(0,8)+'...' : 'N/A'}</td><td>${orig}</td><td>${r.score.toFixed(4)}</td><td style="color:${deltaColor}">${delta !== '-' ? (parseFloat(delta)>0?'+':'')+delta : '-'}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    html += '<div style="margin-top:15px;"><h4>Rerank 后排序结果</h4>';
+    after.forEach((r, i) => html += renderMemoryCard(r, i));
+    html += '</div>';
+  }
+  document.getElementById('stage-rerank').innerHTML = html;
+  document.getElementById('meta-rerank').innerText = error ? '失败回退' : (applied ? `${after.length} 条` : '跳过');
+}
+
+/**
+ * Renders Stage 5: Final truncated results (top max_results after all processing).
+ * @param {Array} results - The final top-N memory results
+ */
+function renderStageFinal(results) {
+  let html = `<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px;">最终入选 ${results.length} 条记忆</div>`;
+  if (results.length === 0) html += '<div class="empty-state">无入选记忆。</div>';
+  else results.forEach((r, i) => html += renderMemoryCard(r, i));
+  document.getElementById('stage-final').innerHTML = html;
+  document.getElementById('meta-final').innerText = `${results.length} 条`;
+}
+
+/**
+ * Renders Stage 6: Prompt assembly preview.
+ * Shows a template selector (6 presets + custom), an editable template textarea,
+ * and a live preview of the final prompt with memory texts injected.
+ *
+ * Presets:
+ *   default: <recalled_memories> wrapper
+ *   style: <writing_style> for style reference
+ *   setting: <world_setting> for world-building context
+ *   character: <character_info> for persona reference
+ *   plot: <story_plot> for narrative content
+ *   context: <new_context> for additional context
+ *
+ * Stores results and templates on window for updatePromptPreview() cross-reference.
+ * @param {Array} results - The final memory results to inject into the template
+ */
+function renderStagePrompt(results) {
+  const templates = {
+    default: '<recalled_memories>\n以下是从记忆库检索到的相关片段，已按语义相关性从高到低排列。\n请从中选择最自然、贴合上下文的引用融入回复，不要求全部引用：\n\n{{text}}\n</recalled_memories>',
+    style: '<writing_style>请参考以下文风和写作风格：\n{{text}}</writing_style>',
+    setting: '<world_setting>以下是世界观和设定信息：\n{{text}}</world_setting>',
+    character: '<character_info>以下是相关角色的人物设定：\n{{text}}</character_info>',
+    plot: '<story_plot>以下是相关的剧情内容，请参考但不要直接照搬：\n{{text}}</story_plot>',
+    context: '<new_context>注意：以下是新添加的重要上下文记录：\n{{text}}</new_context>'
+  };
+  // Template preset dropdown selector
+  let html = '<div style="margin-bottom:12px;"><label style="margin-right:8px;">Template 预设:</label><select id="promptPreset" onchange="updatePromptPreview()">';
+  html += '<option value="default">默认 (recalled_memories)</option>';
+  html += '<option value="style">文风参考</option>';
+  html += '<option value="setting">设定参考</option>';
+  html += '<option value="character">人设参考</option>';
+  html += '<option value="plot">剧情体验</option>';
+  html += '<option value="context">上下文记忆</option>';
+  html += '<option value="custom">自定义</option></select></div>';
+  // Editable template textarea — changes trigger live preview update
+  html += '<textarea id="promptTemplate" rows="4" style="margin-bottom:12px;font-family:var(--font-mono);font-size:12px;" oninput="updatePromptPreview()">' + escapeHtml(templates.default) + '</textarea>';
+  html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">最终 Prompt（AI 实际看到的文本）：</div>';
+  // Live preview div — displays the template with {{text}} replaced by actual memory texts
+  html += '<div class="prompt-preview" id="promptPreview"></div>';
+  document.getElementById('stage-prompt').innerHTML = html;
+  document.getElementById('meta-prompt').innerText = `${results.length} 条`;
+  // Store in window scope so updatePromptPreview can access them (called from inline onchange)
+  window._promptResults = results;
+  window._promptTemplates = templates;
+  updatePromptPreview();
+}
+
+/**
+ * Updates the live prompt preview when the user changes the template or edits the text.
+ * If a preset is selected (not "custom"), loads its template into the textarea.
+ * Replaces all {{text}} placeholders with the actual memory texts joined by newlines.
+ * Called via inline onchange/oninput from renderStagePrompt's generated HTML.
+ */
+function updatePromptPreview() {
+  const preset = document.getElementById('promptPreset')?.value;
+  const templates = window._promptTemplates || {};
+  // Load preset template into textarea if a named preset is selected
+  if (preset && preset !== 'custom' && templates[preset]) {
+    document.getElementById('promptTemplate').value = templates[preset];
+  }
+  const tmpl = document.getElementById('promptTemplate').value;
+  // Join all memory texts with a separator for readability
+  const texts = (window._promptResults || []).map(r => r.text).join('\n\n---\n\n');
+  const preview = tmpl.replace(/{{text}}/g, texts);
+  document.getElementById('promptPreview').innerText = preview;
+}
+</script>
+</body>
+</html>

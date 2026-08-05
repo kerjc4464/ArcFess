@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArcFess 记忆系统</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #090d14;
+  --surface: #111827;
+  --border: #1f2d44;
+  --text: #e2e8f0;
+  --dim: #7a8da6;
+  --purple: #a78bfa;
+  --purple-bg: rgba(167,139,250,0.10);
+  --purple-border: rgba(167,139,250,0.30);
+  --green: #4ade80;
+  --green-bg: rgba(74,222,128,0.10);
+  --green-border: rgba(74,222,128,0.30);
+  --amber: #fbbf24;
+  --amber-bg: rgba(251,191,36,0.10);
+  --amber-border: rgba(251,191,36,0.30);
+  --blue: #60a5fa;
+  --blue-bg: rgba(96,165,250,0.08);
+  --blue-border: rgba(96,165,250,0.25);
+  --red: #f87171;
+}
+
+html {
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'JetBrains Mono', monospace;
+  color: var(--text);
+}
+
+/* Starfield */
+.stars {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(1.5px 1.5px at 8% 12%, rgba(167,139,250,0.5), transparent),
+    radial-gradient(1.5px 1.5px at 22% 28%, rgba(74,222,128,0.45), transparent),
+    radial-gradient(1.2px 1.2px at 38% 8%, rgba(251,191,36,0.35), transparent),
+    radial-gradient(1.6px 1.6px at 52% 45%, rgba(167,139,250,0.4), transparent),
+    radial-gradient(1.3px 1.3px at 68% 18%, rgba(96,165,250,0.45), transparent),
+    radial-gradient(1.5px 1.5px at 78% 58%, rgba(74,222,128,0.35), transparent),
+    radial-gradient(1.2px 1.2px at 12% 72%, rgba(251,191,36,0.4), transparent),
+    radial-gradient(1.4px 1.4px at 42% 88%, rgba(96,165,250,0.3), transparent),
+    radial-gradient(1.3px 1.3px at 88% 80%, rgba(167,139,250,0.4), transparent),
+    radial-gradient(1.5px 1.5px at 6% 48%, rgba(74,222,128,0.3), transparent),
+    radial-gradient(1.2px 1.2px at 94% 35%, rgba(251,191,36,0.35), transparent),
+    radial-gradient(1.4px 1.4px at 55% 65%, rgba(167,139,250,0.3), transparent);
+}
+
+/* Full page */
+.page {
+  position: relative; z-index: 1;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 24px 32px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ─── HEADER ─── */
+.header {
+  text-align: center;
+  padding-bottom: 20px;
+}
+.header h1 {
+  font-size: 36px; font-weight: 800; letter-spacing: 3px;
+  background: linear-gradient(135deg, var(--purple), #c4b5fd, var(--green));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 6px;
+}
+.header .sub {
+  font-size: 15px; color: var(--dim); letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+.badges {
+  display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;
+}
+.badge {
+  padding: 5px 16px; border-radius: 16px;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+}
+.badge-p { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+.badge-g { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-border); }
+.badge-a { background: var(--amber-bg);  color: var(--amber);  border: 1px solid var(--amber-border); }
+
+/* ─── MAIN LAYOUT ─── */
+.main-layout {
+  flex: 1;
+  display: flex;
+  gap: 32px;
+  align-items: stretch;
+}
+
+/* ─── LEFT: MAIN FLOW ─── */
+.main-flow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* ─── RIGHT: SIDEBAR ─── */
+.side-flow {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ─── FLOW ROW ─── */
+.flow-row {
+  display: flex;
+  gap: 0;
+  align-items: stretch;
+  flex: 1;
+}
+
+/* ─── CARD ─── */
+.card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px 22px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  min-width: 0;
+}
+.card:hover {
+  border-color: rgba(167,139,250,0.45);
+  box-shadow: 0 0 28px rgba(167,139,250,0.12);
+}
+.card-num {
+  position: absolute; top: 10px; right: 14px;
+  font-size: 12px; font-weight: 700; color: var(--dim);
+  background: rgba(0,0,0,0.35); padding: 3px 10px; border-radius: 10px;
+}
+.card-icon { font-size: 36px; margin-bottom: 8px; line-height: 1; }
+.card-title {
+  font-size: 17px; font-weight: 700;
+  background: linear-gradient(135deg, var(--purple), var(--green));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+.card-desc {
+  font-size: 13px; color: #94a3b8; line-height: 1.7;
+}
+
+/* Card accent borders */
+.card-start  { border-left: 4px solid var(--green); }
+.card-split  { border-left: 4px solid #a78bfa; background: linear-gradient(160deg, rgba(167,139,250,0.06), rgba(251,191,36,0.04)); }
+.card-think  { border-left: 4px solid var(--amber); }
+.card-search { border-left: 4px solid var(--blue); }
+.card-merge  { border-left: 4px solid var(--purple); }
+.card-rerank { border-left: 4px solid var(--green); }
+.card-inject { border-left: 4px solid var(--purple); }
+.card-end    { border-left: 4px solid var(--green); background: linear-gradient(160deg, rgba(74,222,128,0.08), rgba(167,139,250,0.05)); }
+
+/* ─── ARROW between cards (horizontal) ─── */
+.h-arrow {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; flex-shrink: 0;
+  font-size: 22px; color: var(--purple); opacity: 0.5;
+}
+
+/* ─── VERTICAL CONNECTOR (between rows) ─── */
+.v-conn {
+  display: flex; justify-content: center; gap: 80px;
+  padding: 4px 0;
+  flex-shrink: 0;
+}
+.v-conn .v-arr {
+  font-size: 18px; color: var(--purple); opacity: 0.35;
+}
+
+/* ─── PARALLEL TRACKS (Row 2) ─── */
+.parallel-wrap {
+  flex: 1;
+  display: flex; flex-direction: column; gap: 4px;
+  min-width: 0;
+}
+.track-label {
+  text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 1px;
+}
+.track-label.a { color: var(--purple); }
+.track-label.b { color: var(--amber); }
+.parallel-cards {
+  flex: 1;
+  display: flex; gap: 12px;
+}
+.parallel-cards .card { min-width: 0; }
+
+/* ─── SIDEBAR ─── */
+.side-head {
+  background: linear-gradient(160deg, rgba(251,191,36,0.12), rgba(251,191,36,0.03));
+  border: 1px solid var(--amber-border);
+  border-radius: 16px;
+  padding: 16px 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.side-head h3 { font-size: 19px; font-weight: 700; color: var(--amber); }
+.side-head .sub { font-size: 12px; color: var(--dim); margin-top: 4px; }
+
+.side-steps {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.s-step {
+  background: var(--amber-bg);
+  border: 1px solid rgba(251,191,36,0.15);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  transition: border-color 0.2s;
+}
+.s-step:hover { border-color: rgba(251,191,36,0.4); }
+
+.s-step-icon { font-size: 26px; flex-shrink: 0; line-height: 1; margin-top: 1px; }
+.s-step-title { font-size: 14px; font-weight: 700; color: var(--amber); line-height: 1.3; }
+.s-step-desc { font-size: 11px; color: #94a3b8; line-height: 1.6; margin-top: 3px; }
+
+.s-arr {
+  text-align: center; font-size: 14px; color: var(--amber); opacity: 0.3;
+  flex-shrink: 0; line-height: 1;
+  margin: -2px 0;
+}
+
+/* ─── BOTTOM BAR ─── */
+.bot-bar {
+  margin-top: 18px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex; align-items: center; gap: 12px;
+  flex-shrink: 0;
+}
+.bot-label {
+  font-size: 13px; font-weight: 700; color: var(--blue);
+  white-space: nowrap;
+}
+.bot-items {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.bot-badge {
+  padding: 5px 14px; border-radius: 12px;
+  font-size: 12px; font-weight: 500;
+  background: var(--blue-bg); color: var(--blue);
+  border: 1px solid var(--blue-border);
+  white-space: nowrap;
+}
+.bot-legend {
+  margin-left: auto;
+  display: flex; gap: 14px;
+  font-size: 11px; color: var(--dim);
+}
+.bot-legend span {
+  display: flex; align-items: center; gap: 5px;
+}
+.bot-legend span::before {
+  content: ''; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.l-purple::before { background: var(--purple); }
+.l-green::before  { background: var(--green); }
+.l-amber::before  { background: var(--amber); }
+.l-blue::before   { background: var(--blue); }
+
+.footer {
+  text-align: center; padding: 14px 0 0;
+  font-size: 11px; color: var(--dim);
+  flex-shrink: 0;
+}
+
+/* ─── SCROLLBAR ─── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="stars"></div>
+
+<div class="page">
+
+  <!-- ═══════ HEADER ═══════ -->
+  <div class="header">
+    <h1>ArcFess 记忆系统</h1>
+    <div class="sub">跟随一条聊天消息的完整旅程 — 从用户输入，到 AI 带着记忆回复</div>
+    <div class="badges">
+      <span class="badge badge-p">🔮 RAG 检索增强生成</span>
+      <span class="badge badge-g">🧬 双轨并行 · 感性 + 理性</span>
+      <span class="badge badge-a">💾 向量化长期记忆</span>
+    </div>
+  </div>
+
+  <!-- ═══════ MAIN BODY ═══════ -->
+  <div class="main-layout">
+
+    <!-- ─── LEFT: MAIN FLOW ─── -->
+    <div class="main-flow">
+
+      <!-- ROW 1: Stage 0 → 1 → 2 -->
+      <div class="flow-row">
+        <div class="card card-start">
+          <div class="card-num">Stage 0</div>
+          <div class="card-icon">💬</div>
+          <div class="card-title">用户发送消息</div>
+          <div class="card-desc">你在 SillyTavern 中和 AI 聊天，发出一条消息。一切从此开始。</div>
+        </div>
+        <div class="h-arrow">▸</div>
+        <div class="card">
+          <div class="card-num">Stage 1</div>
+          <div class="card-icon">🎣</div>
+          <div class="card-title">拦截触发</div>
+          <div class="card-desc">插件在 AI 生成回复之前拦截消息，调用 <b>rearrangeChat()</b>，启动记忆检索。</div>
+        </div>
+        <div class="h-arrow">▸</div>
+        <div class="card card-split">
+          <div class="card-num">Stage 2</div>
+          <div class="card-icon">🛤️</div>
+          <div class="card-title">双轨并行检索</div>
+          <div class="card-desc">两轨<strong>同时出发</strong>、互不等待：感性轨凭直觉搜向量，理性轨先用 LLM 分析意图。</div>
+        </div>
+      </div>
+
+      <!-- Connector 1→2 -->
+      <div class="v-conn">
+        <span class="v-arr">▼</span>
+        <span class="v-arr">▼</span>
+        <span class="v-arr">▼</span>
+      </div>
+
+      <!-- ROW 2: Stage 3 + 4 (parallel) → 5 -->
+      <div class="flow-row">
+        <div class="parallel-wrap">
+          <div class="track-label b">B 轨 · 理性 Reason</div>
+          <div class="parallel-cards">
+            <div class="card card-think">
+              <div class="card-num">Stage 3</div>
+              <div class="card-icon">🧠</div>
+              <div class="card-title">Egos 思考引擎</div>
+              <div class="card-desc">LLM 三步思维链分析用户意图：<br>① 场景分析 ② 意图推断 ③ 关键词生成</div>
+            </div>
+            <div class="card card-search">
+              <div class="card-num">Stage 4</div>
+              <div class="card-icon">🔍</div>
+              <div class="card-title">FAISS 向量搜索</div>
+              <div class="card-desc">嵌入 API 把文字变向量 → 发送 ArcFess 后端 → FAISS L2 距离找最相似记忆。</div>
+            </div>
+          </div>
+          <div class="track-label a" style="margin-top:2px;">A 轨 · 感性 Sense（Stage 4 是两轨共用搜索）</div>
+        </div>
+        <div class="h-arrow" style="font-size:26px;">⤿</div>
+        <div class="card card-merge">
+          <div class="card-num">Stage 5</div>
+          <div class="card-icon">⚖️</div>
+          <div class="card-title">结果合并 · α 截断</div>
+          <div class="card-desc">两轨结果按 <b>α 比率</b> 混合：理性配额 + 感性配额 → 选出 Top-N 最相关记忆。</div>
+        </div>
+      </div>
+
+      <!-- Connector 2→3 -->
+      <div class="v-conn">
+        <span class="v-arr" style="margin-left:50px;">▼</span>
+      </div>
+
+      <!-- ROW 3: Stage 6 → 7 → 8 -->
+      <div class="flow-row">
+        <div class="card card-rerank">
+          <div class="card-num">Stage 6</div>
+          <div class="card-icon">🧹</div>
+          <div class="card-title">去重 + 重排序</div>
+          <div class="card-desc">精确文本去重 + 可选 ReRanker 精排。<br>hybrid = rerank × α + origin × (1−α)</div>
+        </div>
+        <div class="h-arrow">▸</div>
+        <div class="card card-inject">
+          <div class="card-num">Stage 7</div>
+          <div class="card-icon">💉</div>
+          <div class="card-title">注入提示词</div>
+          <div class="card-desc">记忆按模板格式化后注入 AI 上下文。<br>位置可选：系统提示词之前 / 之后 / 聊天中。</div>
+        </div>
+        <div class="h-arrow">▸</div>
+        <div class="card card-end">
+          <div class="card-num">Stage 8</div>
+          <div class="card-icon">✨</div>
+          <div class="card-title">AI 生成回复</div>
+          <div class="card-desc">AI 看到：系统提示词 + 注入记忆 + 聊天历史 + 用户消息 → 带着「记忆」回复！<br><b>这就是完整的 RAG 过程。</b></div>
+        </div>
+      </div>
+
+    </div><!-- /main-flow -->
+
+    <!-- ─── RIGHT: SIDEBAR ─── -->
+    <div class="side-flow">
+      <div class="side-head">
+        <h3>📥 记忆是怎么存进去的？</h3>
+        <div class="sub">Vectorization · 向量化存储流程</div>
+      </div>
+
+      <div class="side-steps">
+        <div class="s-step">
+          <div class="s-step-icon">📋</div>
+          <div>
+            <div class="s-step-title">A · 选择内容</div>
+            <div class="s-step-desc">聊天消息范围、DataBank 文件、World Info 世界书条目</div>
+          </div>
+        </div>
+
+        <div class="s-arr">▼</div>
+
+        <div class="s-step">
+          <div class="s-step-icon">⛏️</div>
+          <div>
+            <div class="s-step-title">B · 提取内容</div>
+            <div class="s-step-desc">Chat / File / WorldInfo 提取器各司其职，黑名单 + 标签规则过滤</div>
+          </div>
+        </div>
+
+        <div class="s-arr">▼</div>
+
+        <div class="s-step">
+          <div class="s-step-icon">🔧</div>
+          <div>
+            <div class="s-step-title">C · 管道加工</div>
+            <div class="s-step-desc">TextPipeline 中间件处理，按大小 / 章节 / 标签分块</div>
+          </div>
+        </div>
+
+        <div class="s-arr">▼</div>
+
+        <div class="s-step">
+          <div class="s-step-icon">🔢</div>
+          <div>
+            <div class="s-step-title">D · 嵌入向量化</div>
+            <div class="s-step-desc">Qwen3-Embedding-8B / Ollama / vLLM → float32 向量</div>
+          </div>
+        </div>
+
+        <div class="s-arr">▼</div>
+
+        <div class="s-step">
+          <div class="s-step-icon">💾</div>
+          <div>
+            <div class="s-step-title">E · 存入后端</div>
+            <div class="s-step-desc">POST /insert → SQLite 存文本 + FAISS 索引向量 + TaskID 管理</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /side-flow -->
+
+  </div><!-- /main-layout -->
+
+  <!-- ═══════ BOTTOM BAR ═══════ -->
+  <div class="bot-bar">
+    <span class="bot-label">🔌 关键外部服务</span>
+    <div class="bot-items">
+      <span class="bot-badge">🤖 SiliconFlow API</span>
+      <span class="bot-badge">🦙 Ollama</span>
+      <span class="bot-badge">🚀 vLLM</span>
+      <span class="bot-badge">🌌 Google Gemini</span>
+      <span class="bot-badge">🖥 ArcFess Backend :8999</span>
+      <span class="bot-badge">📊 FAISS 索引</span>
+      <span class="bot-badge">🗄 SQLite</span>
+    </div>
+    <div class="bot-legend">
+      <span class="l-purple">主流程</span>
+      <span class="l-green">起点/终点</span>
+      <span class="l-amber">理性轨</span>
+      <span class="l-blue">感性轨</span>
+    </div>
+  </div>
+
+  <!-- ═══════ FOOTER ═══════ -->
+  <div class="footer">
+    ArcFess v0.7 · 开发者: RaphllA &amp; Jc_ker · SillyTavern 插件 · 双轨并行检索 · α 混合 · FAISS · RAG
+  </div>
+
+</div><!-- /page -->
+
+</body>
+</html>

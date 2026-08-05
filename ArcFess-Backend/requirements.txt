@@ -1,0 +1,7 @@
+Flask
+waitress
+numpy
+faiss-cpu
+hanlp
+torch
+requests

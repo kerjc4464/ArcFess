@@ -1,0 +1,1301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArcFess 代码蓝图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --bg: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-link: #58a6ff;
+  --accent-core: #f85149;
+  --accent-infra: #58a6ff;
+  --accent-ui: #bc8cff;
+  --accent-utils: #3fb950;
+  --accent-services: #d29922;
+  --accent-debug: #8b949e;
+  --accent-stapi: #f0e68c;
+  --accent-external: #39d353;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* ── Header ── */
+.header {
+  background: linear-gradient(135deg, #161b22 0%, #0d1117 50%, #161b22 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 32px 40px;
+  text-align: center;
+}
+.header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #58a6ff, #bc8cff, #f85149);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header .subtitle {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+/* ── Tab Navigation ── */
+.tab-nav {
+  display: flex;
+  gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 0 40px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  flex-wrap: wrap;
+}
+.tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 14px 20px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-family: inherit;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+  color: var(--text-link);
+  border-bottom-color: var(--text-link);
+}
+
+/* ── Tab Content ── */
+.tab-content { display: none; padding: 40px; }
+.tab-content.active { display: block; }
+
+/* ── Section Title ── */
+.section-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+.section-desc {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+}
+
+/* ── Legend ── */
+.legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+
+/* ── Mermaid Container ── */
+.mermaid-wrap {
+  background: #0a0e13;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 32px;
+  overflow-x: auto;
+}
+
+/* ── Tables ── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 32px;
+  font-size: 0.85rem;
+}
+thead th {
+  background: var(--bg-secondary);
+  color: var(--text);
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  font-weight: 600;
+  position: sticky;
+  top: 56px;
+  z-index: 10;
+}
+tbody td {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr:nth-child(even) { background: var(--bg-secondary); }
+tbody tr:nth-child(odd) { background: var(--bg); }
+tbody tr:hover { background: var(--bg-tertiary); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.badge-core { background: rgba(248,81,73,0.2); color: var(--accent-core); }
+.badge-high { background: rgba(210,153,34,0.2); color: var(--accent-services); }
+.badge-mid { background: rgba(88,166,255,0.2); color: var(--accent-infra); }
+.badge-low { background: rgba(139,148,158,0.2); color: var(--accent-debug); }
+
+/* ── Code Blocks ── */
+.code-block {
+  background: #0a0e13;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.code-block pre {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 0.82rem;
+  color: #e6edf3;
+  white-space: pre;
+  margin: 0;
+}
+
+/* ── API Method Labels ── */
+.method {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: monospace;
+  margin-right: 6px;
+}
+.method-get { background: rgba(63,185,80,0.2); color: #3fb950; }
+.method-post { background: rgba(88,166,255,0.2); color: #58a6ff; }
+
+.endpoint-path {
+  font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  color: #e6edf3;
+}
+
+/* ── Footer ── */
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 24px 40px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* ── Print ── */
+@media print {
+  body { background: white; color: black; }
+  .header { background: #f6f8fa; border-bottom: 1px solid #d0d7de; }
+  .tab-nav { display: none; }
+  .tab-content { display: block !important; page-break-after: always; }
+  .tab-content:last-child { page-break-after: auto; }
+  .footer { border-top: 1px solid #d0d7de; }
+  .mermaid-wrap { border: 1px solid #d0d7de; }
+  table { font-size: 0.75rem; }
+  thead th { background: #f6f8fa; color: black; border-color: #d0d7de; }
+  tbody td { border-color: #d0d7de; }
+  tbody tr:nth-child(even) { background: #f6f8fa; }
+  .code-block { border: 1px solid #d0d7de; background: #f6f8fa; }
+}
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .header { padding: 20px 16px; }
+  .header h1 { font-size: 1.4rem; }
+  .tab-nav { padding: 0 16px; }
+  .tab-btn { padding: 10px 14px; font-size: 0.8rem; }
+  .tab-content { padding: 20px 16px; }
+  table { font-size: 0.75rem; }
+  thead th { position: static; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ HEADER ═══ -->
+<header class="header">
+  <h1>ArcFess 代码蓝图</h1>
+  <div class="subtitle">专家级 · 模块关系图 · API契约 · 数据模型 · 时序图 &nbsp;|&nbsp; Expert-Level · Module Relationship Map · API Contract · Data Models · Sequence Diagrams</div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ TAB NAV ═══ -->
+<nav class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('tab-deps')">📦 文件依赖图 File Deps</button>
+  <button class="tab-btn" onclick="switchTab('tab-api-st')">🔌 ST API 清单</button>
+  <button class="tab-btn" onclick="switchTab('tab-api-backend')">⚡ 后端API契约 Backend API</button>
+  <button class="tab-btn" onclick="switchTab('tab-models')">🗂️ 数据模型 Data Models</button>
+  <button class="tab-btn" onclick="switchTab('tab-services')">🌐 外部服务 External Services</button>
+  <button class="tab-btn" onclick="switchTab('tab-sequence')">📶 时序图 Sequence</button>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 1 ═══ -->
+<div id="tab-deps" class="tab-content active">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-core);">📦 完整文件依赖图 Complete File Dependency Graph</h2>
+<p class="section-desc">每个模块的导入关系，按目录分组。箭头方向: <code>A → B</code> 表示 <b>A 导入 B</b>。Grouped by directory. Arrow direction: <code>A → B</code> means <b>A imports B</b>.</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-core)"></span>Core</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-infra)"></span>Infrastructure</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-ui)"></span>UI / Presentation</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-utils)"></span>Utils</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-services)"></span>Services</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-debug)"></span>Debug</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-stapi)"></span>ST APIs</div>
+  <div class="legend-item"><span class="legend-dot" style="background:var(--accent-external)"></span>External / CSS</div>
+</div>
+
+<div class="mermaid-wrap">
+<div class="mermaid">
+%%{init: {'theme':'dark','themeVariables':{'primaryColor':'#f85149','primaryTextColor':'#fff','primaryBorderColor':'#f85149','lineColor':'#8b949e','secondaryColor':'#161b22','tertiaryColor':'#21262d'}}}%%
+flowchart LR
+
+subgraph MAIN["📂 入口 Entry"]
+  INDEX("index.js<br/><i>~4000 lines</i>"):::core
+end
+
+subgraph INFRA["🔵 Infrastructure"]
+  CFG("ConfigManager.js"):::infra
+  STORAGE("StorageAdapter.js"):::infra
+  VECTOR_ADAPTER("VectorizationAdapter.js"):::infra
+  EB("EventBus.js"):::infra
+  EB_INST("eventBus.instance.js"):::infra
+end
+
+subgraph CORE["🔴 Core"]
+  FUSION("FusionManager.js"):::core
+end
+
+subgraph EXTRACTORS["🔴 Core / Extractors"]
+  CHAT_EX("ChatExtractor.js"):::core
+  FILE_EX("FileExtractor.js"):::core
+  WI_EX("WorldInfoExtractor.js"):::core
+  IEX("IContentExtractor.js<br/><i>interface</i>"):::core
+end
+
+subgraph MEMORY["🔴 Core / Memory"]
+  MEMSVC("MemoryService.js"):::core
+end
+
+subgraph PIPELINE["🔴 Core / Pipeline"]
+  PIPELINE_INTEG("PipelineIntegration.js"):::core
+  TP("TextPipeline.js"):::core
+  TD("TextDispatcher.js"):::core
+  PC("ProcessingContext.js"):::core
+  PF("ProcessorFactory.js"):::core
+  PR("ProcessorRegistry.js"):::core
+  MM("MiddlewareManager.js"):::core
+  LM("LifecycleManager.js"):::core
+  PM("PipelineEventBus.js"):::core
+  VP("VectorizationProcessor.js"):::core
+  ITP("ITextProcessor.js<br/><i>interface</i>"):::core
+end
+
+subgraph ENTITIES["🔴 Core / Entities"]
+  ENT_CONTENT("Content.js"):::core
+  ENT_VECTOR("Vector.js"):::core
+  ENT_TASK("Task.js"):::core
+end
+
+subgraph EXT_TASKS["🔴 Core / External Tasks"]
+  ETM("ExternalTaskManager.js"):::core
+  TRR("TaskReferenceResolver.js"):::core
+  VCM("VectorCollectionManager.js"):::core
+end
+
+subgraph EXPORT["🔴 Core / Export-Import"]
+  FSM("FileSystemManager.js"):::core
+  VEIM("VectorExportImportManager.js"):::core
+  HVM("HybridVectorManager.js"):::core
+  IVDB("InMemoryVectorDB.js"):::core
+  VCACHE("VectorCacheManager.js"):::core
+end
+
+subgraph QUERY["🔴 Core / Query"]
+  EQS("EnhancedQuerySystem.js"):::core
+end
+
+subgraph SERVICES["🟠 Services"]
+  RERANK("RerankService.js"):::service
+  RERANK_CFG("RerankConfig.js"):::service
+end
+
+subgraph UI["🟣 UI / Presentation"]
+  SM("settingsManager.js"):::ui
+  DU("domUtils.js"):::ui
+  STM("StateManager.js"):::ui
+  EM("EventManager.js"):::ui
+  TDISPLAY("TaskDisplay.js"):::ui
+  AB("ActionButtons.js"):::ui
+  TL("TaskList.js"):::ui
+end
+
+subgraph UTILS["🟢 Utils"]
+  CHAT_UTIL("chatUtils.js"):::util
+  CONTENT_FILTER("contentFilter.js"):::util
+  HASH("hash.js"):::util
+  LOGGER("Logger.js"):::util
+  TAG_EX("tagExtractor.js"):::util
+  TAG_SCAN("tagScanner.js"):::util
+  TASK_NAME("taskNaming.js"):::util
+end
+
+subgraph DEBUG["⚫ Debug"]
+  DBG("debugger.js"):::debug
+  DBG_UI("ui-manager.js"):::debug
+  DBG_ANALYZER("analyzers/*.js"):::debug
+  DBG_TOOLS("tools/*.js"):::debug
+  DBG_TMPL("templates/debug-ui.html"):::debug
+end
+
+subgraph WEBLLM["🟢 WebLLM"]
+  WLLM("webllm.js"):::util
+end
+
+subgraph CSS_HTML["🟢 Static Assets"]
+  STYLE("style.css"):::ext
+  STYLES_DIR("src/ui/styles/<br/>index/base/buttons/<br/>components/forms/<br/>preview/progress/<br/>responsive/tags/tasks"):::ext
+  SETTINGS_HTML("settings-modular.html"):::ext
+  API_TESTER("api-tester.html"):::ext
+end
+
+subgraph ST_EXTERNAL["🟡 SillyTavern APIs"]
+  ST_EVENTS("eventSource<br/>event_types<br/>getCurrentChatId<br/>getRequestHeaders"):::stapi
+  ST_SETTINGS("extension_settings<br/>saveSettingsDebounced<br/>getContext<br/>renderExtensionTemplateAsync<br/>ModuleWorkerWrapper"):::stapi
+  ST_PROMPT("setExtensionPrompt<br/>substituteParams<br/>substituteParamsExtended<br/>generateRaw"):::stapi
+  ST_CHAT("saveChatConditional<br/>chat_metadata<br/>saveChatDebounced"):::stapi
+  ST_WORLD("getSortedEntries<br/>saveWorldInfo<br/>loadWorldInfo<br/>createWorldInfoEntry"):::stapi
+  ST_FILE("getDataBankAttachments<br/>getFileAttachment"):::stapi
+  ST_OTHER("oai_settings<br/>callGenericPopup<br/>textgen_types<br/>getStringHash<br/>debounce<br/>waitUntilCondition<br/>formatRanges<br/>SlashCommand"):::stapi
+end
+
+%% INDEX imports
+INDEX --> CFG
+INDEX --> STORAGE
+INDEX --> VECTOR_ADAPTER
+INDEX --> EB_INST
+INDEX --> FUSION
+INDEX --> CHAT_EX
+INDEX --> FILE_EX
+INDEX --> WI_EX
+INDEX --> MEMSVC
+INDEX --> PIPELINE_INTEG
+INDEX --> TP
+INDEX --> TD
+INDEX --> PC
+INDEX --> ETM
+INDEX --> TRR
+INDEX --> VCM
+INDEX --> EQS
+INDEX --> FSM
+INDEX --> VEIM
+INDEX --> RERANK
+INDEX --> RERANK_CFG
+INDEX --> SM
+INDEX --> DU
+INDEX --> STM
+INDEX --> EM
+INDEX --> TDISPLAY
+INDEX --> CHAT_UTIL
+INDEX --> CONTENT_FILTER
+INDEX --> HASH
+INDEX --> LOGGER
+INDEX --> TAG_EX
+INDEX --> TAG_SCAN
+INDEX --> TASK_NAME
+INDEX --> WLLM
+INDEX --> DBG
+
+%% Pipeline internal
+PIPELINE_INTEG --> TP
+PIPELINE_INTEG --> TD
+PIPELINE_INTEG --> PC
+PIPELINE_INTEG --> PF
+PIPELINE_INTEG --> PR
+PIPELINE_INTEG --> VP
+PIPELINE_INTEG --> MM
+PIPELINE_INTEG --> LM
+TP --> LOGGER
+TP --> PM
+TP --> MM
+TP --> LM
+TD --> LOGGER
+TD --> EB_INST
+PF --> LOGGER
+PF --> VP
+PF --> PR
+PR --> LOGGER
+MM --> LOGGER
+LM --> LOGGER
+LM --> PM
+VP --> ITP
+VP --> LOGGER
+
+%% Extractors
+CHAT_EX --> IEX
+FILE_EX --> IEX
+WI_EX --> IEX
+CHAT_EX -.-> ST_EVENTS
+CHAT_EX -.-> ST_FILE
+FILE_EX -.-> ST_EVENTS
+FILE_EX -.-> ST_FILE
+WI_EX -.-> ST_WORLD
+
+%% Memory
+MEMSVC -.-> ST_EVENTS
+MEMSVC -.-> ST_WORLD
+MEMSVC -.-> ST_CHAT
+
+%% External Tasks
+ETM --> LOGGER
+ETM --> TRR
+ETM --> VCM
+TRR --> LOGGER
+EQS --> TRR
+EQS --> VCM
+
+%% Export/Import
+FSM --> VEIM
+VEIM --> HVM
+VEIM --> IVDB
+VEIM --> VCACHE
+
+%% UI internal
+SM --> CFG
+SM --> STM
+SM --> EM
+SM --> DU
+SM --> MEMSVC
+SM --> EB_INST
+SM --> AB
+SM --> TL
+STM --> EB_INST
+EM --> EB_INST
+EM -.-> ST_EVENTS
+EM --> STM
+AB --> SM
+TL -.-> ST_SETTINGS
+TL -.-> ST_CHAT
+TL -.-> ST_WORLD
+
+%% Utils internal
+TAG_EX --> CONTENT_FILTER
+TAG_SCAN --> CONTENT_FILTER
+CHAT_UTIL -.-> ST_PROMPT
+
+%% Infrastructure internal
+EB_INST --> EB
+VECTOR_ADAPTER --> LOGGER
+STORAGE -.-> "ArcFess Backend<br/>localhost:8999"
+
+%% Debug internal
+DBG --> DBG_UI
+DBG --> DBG_ANALYZER
+DBG --> DBG_TOOLS
+DBG_UI --> DBG_TMPL
+
+%% CSS
+SM -.-> STYLE
+SM -.-> STYLES_DIR
+SM -.-> SETTINGS_HTML
+
+%% Styles
+classDef core fill:#f85149,color:#fff,stroke:#f85149
+classDef infra fill:#58a6ff,color:#fff,stroke:#58a6ff
+classDef ui fill:#bc8cff,color:#fff,stroke:#bc8cff
+classDef util fill:#3fb950,color:#fff,stroke:#3fb950
+classDef service fill:#d29922,color:#fff,stroke:#d29922
+classDef debug fill:#8b949e,color:#fff,stroke:#8b949e
+classDef stapi fill:#f0e68c,color:#0d1117,stroke:#f0e68c
+classDef ext fill:#39d353,color:#0d1117,stroke:#39d353
+</div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 2 ═══ -->
+<div id="tab-api-st" class="tab-content">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-stapi);">🔌 ST API 依赖清单 SillyTavern API Dependencies</h2>
+<p class="section-desc">本扩展所依赖的全部 SillyTavern 内部 API/Hook 清单。All SillyTavern internal APIs/hooks consumed by this extension.</p>
+
+<table>
+<thead>
+<tr>
+  <th>API / Hook</th>
+  <th>来源模块 Source Module</th>
+  <th>用途 Description</th>
+  <th>关键度 Priority</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>eventSource</code></td>
+  <td>script.js</td>
+  <td>监听聊天事件 (消息发送/接收/编辑/删除) — Subscribe to chat events</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>event_types</code></td>
+  <td>script.js</td>
+  <td>事件类型常量 (MESSAGE_RECEIVED, MESSAGE_SENT, CHAT_CHANGED, etc.)</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>getCurrentChatId()</code></td>
+  <td>script.js</td>
+  <td>获取当前激活的聊天 ID — Get active chat identifier</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>getRequestHeaders()</code></td>
+  <td>script.js</td>
+  <td>获取 ST 服务端 API 请求头 (含认证) — Auth headers for ST API</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>saveSettingsDebounced()</code></td>
+  <td>script.js</td>
+  <td>防抖持久化扩展设置到 settings.json — Persist extension config</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>extension_settings</code></td>
+  <td>extensions.js</td>
+  <td>全局扩展设置命名空间 (vectors) — Global extension settings store</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>setExtensionPrompt()</code></td>
+  <td>script.js</td>
+  <td>将检索到的记忆注入系统提示词 — Inject memories into system prompt</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>substituteParams()</code></td>
+  <td>script.js</td>
+  <td>宏/参数替换 (e.g. {{user}}, {{char}}) — Macro parameter expansion</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>substituteParamsExtended()</code></td>
+  <td>script.js</td>
+  <td>扩展参数替换 (通配符 + 递归) — Extended param substitution with wildcards</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>generateRaw</code></td>
+  <td>script.js</td>
+  <td>直接调用 LLM 生成 (用于记忆摘要/标签生成) — Raw LLM generation API</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>saveChatConditional()</code></td>
+  <td>script.js</td>
+  <td>条件保存聊天 — Conditional chat save (avoids saving during streaming)</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>chat_metadata</code></td>
+  <td>script.js</td>
+  <td>聊天级元数据对象 (存储向量化状态/哈希等) — Chat scoped metadata</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>saveChatDebounced()</code></td>
+  <td>script.js</td>
+  <td>持久化 chat_metadata 变更</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>getContext()</code></td>
+  <td>extensions.js</td>
+  <td>获取 ST 全局上下文对象 — Global ST context</td>
+  <td><span class="badge badge-core">核心 Core</span></td>
+</tr>
+<tr>
+  <td><code>renderExtensionTemplateAsync()</code></td>
+  <td>extensions.js</td>
+  <td>加载 HTML 模板到 DOM — Async HTML template loading</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>ModuleWorkerWrapper</code></td>
+  <td>extensions.js</td>
+  <td>同步包装器 (用于兼容异步 API 的同步调用) — Sync wrapper utility</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>getSortedEntries()</code></td>
+  <td>world-info.js</td>
+  <td>获取指定世界书的排序条目 — Get sorted world info entries</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>saveWorldInfo()</code></td>
+  <td>world-info.js</td>
+  <td>保存世界书数据 — Save world info data</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>loadWorldInfo()</code></td>
+  <td>world-info.js</td>
+  <td>加载世界书文件 — Load world info from disk</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>createWorldInfoEntry()</code></td>
+  <td>world-info.js</td>
+  <td>创建世界书条目 — Create world info entry (用于记忆注入)</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>getDataBankAttachments()</code></td>
+  <td>chats.js</td>
+  <td>获取当前聊天已附加的数据文件列表 — List attached data files</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>getFileAttachment()</code></td>
+  <td>chats.js</td>
+  <td>读取附加文件内容 — Read attached file content</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>oai_settings</code></td>
+  <td>openai.js</td>
+  <td>OpenAI 兼容配置 (备选嵌入源) — OpenAI compat settings</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>callGenericPopup()</code></td>
+  <td>popup.js</td>
+  <td>弹出确认/提示对话框 — Popup dialog utility</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>textgen_types</code></td>
+  <td>textgen-settings.js</td>
+  <td>文本生成类型常量 — Text generation type enums</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+<tr>
+  <td><code>getStringHash()</code></td>
+  <td>utils.js</td>
+  <td>内容哈希 (用于向量去重/变更检测) — Content hash for dedup</td>
+  <td><span class="badge badge-high">高 High</span></td>
+</tr>
+<tr>
+  <td><code>debounce()</code></td>
+  <td>utils.js</td>
+  <td>防抖工具 — Debounce utility</td>
+  <td><span class="badge badge-low">低 Low</span></td>
+</tr>
+<tr>
+  <td><code>waitUntilCondition()</code></td>
+  <td>utils.js</td>
+  <td>条件等待 — Async conditional wait</td>
+  <td><span class="badge badge-low">低 Low</span></td>
+</tr>
+<tr>
+  <td><code>formatRanges()</code></td>
+  <td>utils.js</td>
+  <td>格式化数字范围 — Number range formatter</td>
+  <td><span class="badge badge-low">低 Low</span></td>
+</tr>
+<tr>
+  <td><code>SlashCommand</code></td>
+  <td>slash-commands/</td>
+  <td>注册斜杠命令 — Register slash commands</td>
+  <td><span class="badge badge-mid">中 Medium</span></td>
+</tr>
+</tbody>
+</table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 3 ═══ -->
+<div id="tab-api-backend" class="tab-content">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-external);">⚡ 后端 API 完整契约 ArcFess Backend API Contract</h2>
+<p class="section-desc">ArcFess 后端 (Python/FAISS) 暴露的完整 REST 接口。所有端点基础 URL: <code>http://{hostname}:8999</code></p>
+
+<h3 style="margin-bottom:12px;">🌐 通用约定 Conventions</h3>
+<table>
+<thead><tr><th>属性</th><th>值</th></tr></thead>
+<tbody>
+<tr><td>Base URL</td><td><code>http://{hostname}:8999</code></td></tr>
+<tr><td>CORS</td><td><code>Access-Control-Allow-Origin: *</code></td></tr>
+<tr><td>Content-Type</td><td><code>application/json</code></td></tr>
+<tr><td>Vector Format</td><td><code>float32[]</code>, L2-normalized, JSON array</td></tr>
+<tr><td>Database</td><td>SQLite (<code>vectors.db</code>) + FAISS <code>IndexFlatL2</code></td></tr>
+<tr><td>Embedding Dim</td><td>Auto-detected from first insert</td></tr>
+<tr><td>SSRF Protection</td><td><code>/thought_proxy</code> 阻止私有/环回 IP — Blocks private/loopback IPs</td></tr>
+</tbody>
+</table>
+
+<h3 style="margin-bottom:12px;">📋 端点清单 Endpoints</h3>
+<table>
+<thead>
+<tr>
+  <th>方法</th>
+  <th>路径</th>
+  <th>请求体 Request Body</th>
+  <th>响应体 Response Body</th>
+  <th>说明 Description</th>
+</tr>
+</thead>
+<tbody>
+
+<tr>
+  <td><span class="method method-get">GET</span></td>
+  <td><span class="endpoint-path">/status</span></td>
+  <td style="color:var(--text-secondary)">—</td>
+  <td><code>{status: "ok", count: N, dim: N}</code></td>
+  <td>健康检查 Health check</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/insert</span></td>
+  <td><div class="code-block" style="margin:0;padding:6px 10px;font-size:0.78rem;"><pre>{
+  "id": "mem_abc123",
+  "text": "原始文本内容",
+  "metadata": {
+    "taskId": "task_001",
+    "type": "chat",
+    "chapter_title": "Chapter 1",
+    "index": 0,
+    "name": "John",
+    "uid": "hash_a1b2c3",
+    "timestamp": 1715000000000
+  },
+  "vector": [0.01, -0.02, ...],
+  "collection_id": "chat_123_chapter_1"
+}</pre></div></td>
+  <td><code>{"status": "ok", "id": "mem_abc123"}</code></td>
+  <td>插入或更新向量 (id 相同时覆盖) — Insert/upsert vector</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/query</span></td>
+  <td><div class="code-block" style="margin:0;padding:6px 10px;font-size:0.78rem;"><pre>{
+  "vector": [0.03, -0.01, ...],
+  "k": 20,
+  "collections": ["chat_123_chapter_1"]
+}</pre></div></td>
+  <td><div class="code-block" style="margin:0;padding:6px 10px;font-size:0.78rem;"><pre>{
+  "results": [
+    {
+      "id": "mem_abc123",
+      "text": "...",
+      "metadata": {...},
+      "score": 0.95,
+      "timestamp": 1715000000.0,
+      "collection_id": "chat_123_chapter_1"
+    }
+  ]
+}</pre></div></td>
+  <td>相似度搜索 (FAISS L2距离 → 余弦相似度) — Similarity search</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/delete</span></td>
+  <td><code>{"ids":["mem_a","mem_b"]}</code> 或 <code>{"filter":{"taskId":"task_001"}}</code></td>
+  <td><code>{"status": "ok", "deleted": 5}</code></td>
+  <td>按 ID 列表或元数据过滤删除 — Delete by IDs or metadata filter</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/purge</span></td>
+  <td><code>{"collection_id": "chat_123_chapter_1"}</code></td>
+  <td><code>{"status": "ok", "deleted": 42}</code></td>
+  <td>清空指定集合 — Purge an entire collection</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/thought_proxy</span></td>
+  <td><div class="code-block" style="margin:0;padding:6px 10px;font-size:0.78rem;"><pre>{
+  "url": "https://api.siliconflow.cn/v1/chat/completions",
+  "api_key": "sk-***",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "messages": [...],
+  "temperature": 0.7,
+  "max_tokens": 2048,
+  "timeout": 30,
+  "verify_ssl": true
+}</pre></div></td>
+  <td>上游 LLM API 的原始 JSON 响应</td>
+  <td>LLM 代理 (带 SSRF 防护) — LLM proxy with SSRF protection</td>
+</tr>
+
+<tr>
+  <td><span class="method method-post">POST</span></td>
+  <td><span class="endpoint-path">/optimize</span></td>
+  <td style="color:var(--text-secondary)">—</td>
+  <td><code>{"status": "ok", "duration": 2.3}</code></td>
+  <td>SQLite VACUUM + FAISS 索引优化 — Database optimization</td>
+</tr>
+
+<tr>
+  <td><span class="method method-get">GET</span></td>
+  <td><span class="endpoint-path">/tasks_stats</span></td>
+  <td style="color:var(--text-secondary)">—</td>
+  <td><div class="code-block" style="margin:0;padding:6px 10px;font-size:0.78rem;"><pre>{
+  "tasks": [
+    {
+      "taskId": "task_001",
+      "count": 240,
+      "sizeBytes": 192000,
+      "firstSeen": 1715000000.0,
+      "lastSeen": 1715100000.0,
+      "types": ["chat", "file"]
+    }
+  ],
+  "total_vectors": 240
+}</pre></div></td>
+  <td>获取所有任务的统计信息 — Get per-task vector stats</td>
+</tr>
+
+<tr>
+  <td><span class="method method-get">GET</span></td>
+  <td><span class="endpoint-path">/collections</span></td>
+  <td style="color:var(--text-secondary)">—</td>
+  <td><code>{"collections":[{"name":"chat_123_c1","count":42}]}</code></td>
+  <td>列出所有集合及其向量数量 — List all collections</td>
+</tr>
+
+</tbody>
+</table>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 4 ═══ -->
+<div id="tab-models" class="tab-content">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-infra);">🗂️ 数据模型 Data Models</h2>
+<p class="section-desc">系统中流转的核心数据结构。Core data structures flowing through the system.</p>
+
+<h3 style="color:var(--accent-external);margin-bottom:10px;">💾 Memory Entry (存储模型 — 后端 SQLite 表)</h3>
+<div class="code-block"><pre>{
+    rowid:         int64     // 自增主键 auto-increment primary key
+    id:            string    // 客户端生成的全局唯一 ID (client-generated unique ID)
+    text:          string    // 原始文本内容 original text content
+    metadata:      JSON {    // 元数据 metadata
+        taskId:         string    // 所属任务 ID
+        type:           "chat" | "file" | "world_info"  // 来源类型
+        chapter_title:  string    // 章节标题
+        index:          number    // 在原始内容中的序号
+        name:           string    // 角色名称
+        uid:            string    // 内容哈希 (content hash for dedup)
+        timestamp:      number    // Unix 毫秒时间戳
+    }
+    vector:        float32[]  // 嵌入向量 (BLOB 序列化存储) — serialized as BLOB
+    timestamp:     float64    // 插入时间戳
+    collection_id: string     // 所属集合 (e.g. "chat_abc_chapter_1")
+}</pre></div>
+
+<h3 style="color:var(--accent-core);margin-bottom:10px;">📄 Content (内容模型 — 前端数据模型)</h3>
+<div class="code-block"><pre>{
+    id:       string           // 内容唯一 ID
+    type:     "chat" | "file" | "world_info"  // 内容来源类型
+    text:     string           // 文本内容
+    metadata: { ... }          // 关联元数据
+}</pre></div>
+
+<h3 style="color:var(--accent-ui);margin-bottom:10px;">🔢 Vector (向量模型 — 嵌入结果)</h3>
+<div class="code-block"><pre>{
+    id:          string       // 向量唯一 ID
+    contentId:   string       // 关联的 Content ID
+    embedding:   float32[]    // 嵌入向量数组
+    metadata:    { ... }      // 关联元数据
+}</pre></div>
+
+<h3 style="color:var(--accent-services);margin-bottom:10px;">📋 Task (任务模型 — 向量化任务)</h3>
+<p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:6px;">支持 Legacy (string ID) 和 New (object) 两种格式 — Supports both legacy and new formats:</p>
+<div class="code-block"><pre>// New format (current)
+{
+    id:            string       // e.g. "task_12345"
+    name:          string       // 任务名称
+    createdAt:     number       // 创建时间戳
+    strategy:      "quota" | "boost"  // 注入策略
+    strategyValue: number       // 策略参数值
+    isExternal:    boolean      // 是否为外部任务
+    sourceChatId:  string       // 来源聊天 ID
+}
+
+// Legacy format
+"task_12345"  // 纯字符串 ID</pre></div>
+
+<h3 style="color:var(--accent-stapi);margin-bottom:10px;">🔄 ProcessingContext (处理上下文 — 管道状态容器)</h3>
+<div class="code-block"><pre>{
+    chatId:     string        // 当前聊天 ID
+    settings:   object        // 扩展设置快照
+    metadata:   object        // 聊天元数据引用
+    timing: {                  // 计时数据
+        start:    number       // 处理开始时间
+        end:      number       // 处理结束时间
+        duration: number       // 总耗时 (ms)
+    }
+    state:      object        // 处理状态跟踪
+    data:       object        // 累积数据 (逐阶段附加)
+    errors:     []            // 错误收集
+    warnings:   []            // 警告收集
+}</pre></div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 5 ═══ -->
+<div id="tab-services" class="tab-content">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-services);">🌐 外部服务依赖 External Service Dependencies</h2>
+<p class="section-desc">ArcFess 所依赖的外部 API 服务及备选方案。External API services and fallback alternatives.</p>
+
+<table>
+<thead>
+<tr>
+  <th>服务 Service</th>
+  <th>端点 Endpoint</th>
+  <th>用途 Purpose</th>
+  <th>备选方案 Fallback</th>
+</tr>
+</thead>
+<tbody>
+
+<tr>
+  <td><strong>SiliconFlow</strong></td>
+  <td><code>api.siliconflow.cn/v1/embeddings</code></td>
+  <td>文本嵌入 — Text Embedding<br/><small>模型: Qwen3-Embedding-8B</small></td>
+  <td>Ollama / vLLM / OpenAI / Cohere / WebLLM</td>
+</tr>
+
+<tr>
+  <td><strong>SiliconFlow</strong></td>
+  <td><code>api.siliconflow.cn/v1/rerank</code></td>
+  <td>结果重排 — Result Reranking<br/><small>模型: Qwen3-Reranker-4B</small></td>
+  <td>自定义 Rerank API / 本地 LLM Rerank</td>
+</tr>
+
+<tr>
+  <td><strong>SiliconFlow</strong></td>
+  <td><code>api.siliconflow.cn/v1/chat/completions</code></td>
+  <td>Egos 思考引擎 — Egos Thought Engine<br/><small>模型: Qwen2.5-7B-Instruct</small></td>
+  <td>自定义 LLM API / 本地模型</td>
+</tr>
+
+<tr>
+  <td><strong>Ollama</strong></td>
+  <td><code>localhost:11434/api/embeddings</code></td>
+  <td>本地嵌入 — Local Embedding<br/><small>完全离线方案</small></td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>vLLM</strong></td>
+  <td><code>localhost:8000/v1/embeddings</code></td>
+  <td>本地高性能嵌入 — Local High-Perf Embedding<br/><small>OpenAI 兼容接口</small></td>
+  <td>—</td>
+</tr>
+
+<tr>
+  <td><strong>Google Gemini</strong></td>
+  <td><code>generativelanguage.googleapis.com/v1beta/openai/chat/completions</code></td>
+  <td>记忆摘要 — Memory Summarization<br/><small>通过 OpenAI 兼容接口调用</small></td>
+  <td>SiliconFlow / 自定义 LLM API</td>
+</tr>
+
+<tr>
+  <td><strong>WebLLM</strong></td>
+  <td>浏览器内 (WebGPU)</td>
+  <td>浏览器内嵌入 — In-Browser Embedding<br/><small>完全离线，客户端侧推理</small></td>
+  <td>—</td>
+</tr>
+
+</tbody>
+</table>
+
+<h3 style="color:var(--text-secondary);margin-top:20px;margin-bottom:8px;">📡 通信架构 Communication Architecture</h3>
+<div class="code-block"><pre>
+ ┌───────────────────────┐      HTTP/SSE       ┌───────────────────────┐
+ │  SillyTavern (Client) │ ◄─────────────────► │  ArcFess Backend      │
+ │  Browser Extension     │   localhost:8999    │  Python/FAISS/SQLite  │
+ └──────────┬────────────┘                      └──────────┬────────────┘
+            │                                              │
+            │  /status /insert /query /delete              │ /thought_proxy
+            │  /purge /optimize /tasks_stats               │
+            │  /collections                                │
+            ▼                                              ▼
+   ┌────────────────┐                          ┌───────────────────────┐
+   │ SillyTavern API │                          │ External LLM Services │
+   │ extensions /     │                          │ SiliconFlow / Ollama  │
+   │ script / world   │                          │ vLLM / Gemini / WebLLM│
+   │ info / chats     │                          └───────────────────────┘
+   └────────────────┘</pre></div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ SECTION 6 ═══ -->
+<div id="tab-sequence" class="tab-content">
+
+<h2 class="section-title" style="border-bottom-color: var(--accent-ui);">📶 前端→后端通信时序图 Sequence Diagrams</h2>
+<p class="section-desc">三个核心流程的完整交互时序。Complete interaction timeline for 3 core flows.</p>
+
+<h3 style="color:var(--accent-core);margin-bottom:12px;">1️⃣ 向量化流程 Vectorization Flow (用户点击→向量化→存储)</h3>
+<div class="mermaid-wrap">
+<div class="mermaid">
+%%{init: {'theme':'dark','sequence':{'mirrorActors':false}}}%%
+sequenceDiagram
+    actor U as 👤 用户 User
+    participant UI as settingsManager<br/>TaskList<br/>ActionButtons
+    participant EM as EventManager
+    participant PIPELINE as PipelineIntegration
+    participant TP as TextPipeline
+    participant EXTRACTOR as ChatExtractor<br/>FileExtractor<br/>WorldInfoExtractor
+    participant DISPATCH as TextDispatcher
+    participant VP as VectorizationProcessor
+    participant VA as VectorizationAdapter
+    participant BE as 🌐 ArcFess Backend<br/>localhost:8999
+    participant DB as 💾 SQLite + FAISS
+
+    U->>UI: 点击 "向量化" 按钮<br/>Click "Vectorize" button
+    UI->>EM: 触发 vectorize:async 事件<br/>Emit vectorize:async event
+    EM->>PIPELINE: 启动管道<br/>Start pipeline
+    PIPELINE->>TP: 创建处理上下文<br/>Create ProcessingContext
+    TP->>EXTRACTOR: 提取内容 (聊天/文件/世界书)<br/>Extract content from source
+    EXTRACTOR-->>TP: Content[] 内容块列表
+    TP->>DISPATCH: 分发内容, 去重, 哈希检测<br/>Dispatch, dedup, hash check
+    DISPATCH->>VP: 逐块处理<br/>Process each chunk
+    VP->>VA: 调用嵌入 API<br/>Call embedding API
+    VA->>VA: 选择嵌入源 (SiliconFlow/Ollama/vLLM/WebLLM)
+    VA-->>VP: float32[] embedding 嵌入向量
+    VP-->>DISPATCH: Vector[] 向量数组
+    DISPATCH->>BE: POST /insert (批量)<br/>POST /insert (batch)
+    BE->>DB: 写入 SQLite<br/>Write to SQLite
+    DB-->>BE: OK
+    BE->>BE: 重建 FAISS 索引<br/>Rebuild FAISS index
+    BE-->>DISPATCH: {"status":"ok"}
+    DISPATCH-->>TP: 向量化完成<br/>Vectorization complete
+    TP-->>PIPELINE: 完成上下文 + 统计<br/>Context with stats
+    PIPELINE-->>EM: 完成事件 + 结果<br/>Completion event + results
+    EM-->>UI: 更新 UI / 进度条完成<br/>Update UI / progress bar
+    UI-->>U: ✅ 向量化完成<br/>✅ Vectorization complete
+</div>
+</div>
+
+<h3 style="color:var(--accent-infra);margin-bottom:12px;">2️⃣ 检索流程 Retrieval Flow (用户发消息→rearrangeChat→检索→注入提示词)</h3>
+<div class="mermaid-wrap">
+<div class="mermaid">
+%%{init: {'theme':'dark','sequence':{'mirrorActors':false}}}%%
+sequenceDiagram
+    actor U as 👤 用户 User
+    participant ST as SillyTavern Core
+    participant EM as EventManager
+    participant EQS as EnhancedQuerySystem
+    participant TRR as TaskReferenceResolver
+    participant VA as VectorizationAdapter
+    participant BE as 🌐 ArcFess Backend<br/>localhost:8999
+    participant RS as RerankService
+    participant UI as setExtensionPrompt
+    participant LLM as 🤖 LLM
+
+    U->>ST: 发送消息<br/>Send message
+    ST->>ST: 构建聊天上下文<br/>Build chat context
+    
+    Note over ST: rearrangeChat hook 触发<br/>rearrangeChat hook fires
+    
+    ST->>EM: eventSource: MESSAGE_SENT
+    EM->>EQS: 执行查询<br/>Execute query
+    EQS->>TRR: 解析任务引用<br/>Resolve task references
+    TRR-->>EQS: 任务列表 + 参数<br/>Task list + params
+    
+    EQS->>VA: 将用户消息编码为向量<br/>Encode user message to vector
+    VA->>BE: POST /query<br/>(vector, k=20, collections)
+    BE->>BE: FAISS 相似度搜索<br/>FAISS similarity search
+    BE-->>VA: top-K 结果<br/>top-K results
+    
+    VA-->>EQS: Vector[] 检索结果<br/>Retrieval results
+    
+    alt Rerank 已启用 Rerank enabled
+        EQS->>RS: 重排序<br/>Rerank results
+        RS-->>EQS: 重排后结果<br/>Reranked results
+    end
+    
+    EQS->>EQS: 按策略过滤/排序<br/>Filter/sort by strategy
+    EQS-->>EM: 记忆文本列表<br/>Memory text list
+    
+    EM->>UI: setExtensionPrompt(memories)
+    UI->>ST: 注入到系统提示词<br/>Inject into system prompt
+    
+    ST->>LLM: 发送完整提示词<br/>Send complete prompt
+    LLM-->>U: 💬 AI 回复<br/>💬 AI Response
+</div>
+</div>
+
+<h3 style="color:var(--accent-services);margin-bottom:12px;">3️⃣ 记忆摘要流程 Memory Summary Flow (自动触发→AI摘要→世界书创建)</h3>
+<div class="mermaid-wrap">
+<div class="mermaid">
+%%{init: {'theme':'dark','sequence':{'mirrorActors':false}}}%%
+sequenceDiagram
+    actor U as 👤 用户 User
+    participant EM as EventManager
+    participant MS as MemoryService
+    participant BE as 🌐 ArcFess Backend<br/>localhost:8999
+    participant ST as SillyTavern
+    participant LLM as 🤖 LLM
+    participant WI as World Info
+
+    Note over EM: 自动触发条件:<br/>向量数 > 阈值 或 对话轮次 > N<br/>Auto triggers when vector count > threshold<br/>or message turns > N
+    
+    EM->>MS: 检查摘要条件<br/>Check summary conditions
+    MS->>BE: GET /tasks_stats<br/>GET /tasks_stats
+    BE-->>MS: 任务统计 (向量数)<br/>Task stats (vector count)
+    
+    alt 需要摘要 Summary needed
+        MS->>BE: POST /query<br/>(检索近期全部记忆)<br/>Retrieve recent memories
+        BE-->>MS: 记忆列表<br/>Memory list
+        
+        MS->>MS: 构建摘要提示词<br/>Build summary prompt
+        MS->>BE: POST /thought_proxy<br/>(LLM 代理调用)<br/>LLM proxy call
+        BE->>ST: 转发 LLM 请求<br/>Forward LLM request
+        ST->>LLM: generateRaw<br/>(记忆材料 → 摘要)
+        LLM-->>ST: 摘要文本<br/>Summary text
+        ST-->>BE: LLM 响应
+        BE-->>MS: 摘要结果<br/>Summary result
+        
+        MS->>MS: 解析摘要<br/>Parse summary
+        MS->>WI: 创建/更新世界书条目<br/>Create/update world info entry
+        Note over WI: 条目名: "ArcFess Memory"<br/>Entry name: "ArcFess Memory"
+        
+        MS->>BE: POST /purge<br/>(可选: 清除已摘要的旧向量)<br/>Optional: purge old summarized vectors
+        BE-->>MS: {"status":"ok"}
+    else 不需要摘要 No summary needed
+        MS-->>EM: 跳过<br/>Skip
+    end
+    
+    EM-->>U: UI 通知 (如有新摘要)<br/>UI notification if new summary
+</div>
+</div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ FOOTER ═══ -->
+<footer class="footer">
+  ArcFess v0.7 &nbsp;·&nbsp; 文件数 / Files: ~60 &nbsp;·&nbsp; 代码量 / LOC: ~15,000 &nbsp;·&nbsp; 开发者 / Developers: RaphllA &amp; Jc_ker
+  <br>
+  <small>生成日期 / Generated: <span id="gen-date"></span> &nbsp;·&nbsp; 文档用途 / Purpose: 团队开发参考 &amp; AI 协作蓝图</small>
+</footer>
+
+<!-- ═══════════════════════════════════════════════════════════════ SCRIPTS ═══ -->
+<script>
+document.getElementById('gen-date').textContent = new Date().toISOString().slice(0, 10);
+
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    primaryColor: '#f85149',
+    primaryTextColor: '#ffffff',
+    primaryBorderColor: '#f85149',
+    lineColor: '#8b949e',
+    secondaryColor: '#161b22',
+    tertiaryColor: '#21262d',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif'
+  },
+  flowchart: {
+    htmlLabels: true,
+    curve: 'basis',
+    padding: 20,
+    nodeSpacing: 30,
+    rankSpacing: 50
+  },
+  sequence: {
+    actorFontSize: 14,
+    noteFontSize: 12,
+    messageFontSize: 13,
+    mirrorActors: false,
+    bottomMarginAdj: 5,
+    boxMargin: 8
+  }
+});
+
+async function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+  const targetBtn = document.querySelector(`[onclick="switchTab('${tabId}')"]`);
+  if (targetBtn) targetBtn.classList.add('active');
+
+  const targetContent = document.getElementById(tabId);
+  if (targetContent) {
+    targetContent.classList.add('active');
+  }
+
+  // Re-render mermaid diagrams when switching to sequence tab (or any tab with mermaid)
+  const mermaidElements = targetContent ? targetContent.querySelectorAll('.mermaid') : [];
+  if (mermaidElements.length > 0) {
+    for (const el of mermaidElements) {
+      if (el.getAttribute('data-processed')) {
+        // Already rendered — strip the processed SVG and re-render
+        const svg = el.querySelector('svg');
+        if (svg) svg.remove();
+        el.removeAttribute('data-processed');
+        el.innerHTML = el.getAttribute('data-original') || el.innerHTML;
+      }
+    }
+    // Force re-render via DOM append trick
+    for (const el of mermaidElements) {
+      const code = el.textContent;
+      el.setAttribute('data-original', code);
+      try {
+        const { svg } = await mermaid.render('mermaid-' + Math.random().toString(36).slice(2, 8), code);
+        el.innerHTML = svg;
+        el.setAttribute('data-processed', 'true');
+      } catch (e) {
+        console.warn('Mermaid render error:', e);
+      }
+    }
+  }
+}
+
+// Store original code on all mermaid blocks
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.mermaid').forEach(el => {
+    el.setAttribute('data-original', el.textContent);
+  });
+});
+</script>
+
+</body>
+</html>

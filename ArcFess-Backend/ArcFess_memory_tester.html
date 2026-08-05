@@ -1,0 +1,745 @@
+<!--
+    ArcFess 记忆观测台 (ArcFess Memory Tester)
+    ==========================================
+    单轨记忆检索测试器：基于 FAISS 本地向量数据库 + 可选硅基流动 ReRank 重排序。
+
+    三阶段管道:
+      1) Embedding  → 调用远端 Embedding API，将输入文本转换为高维向量
+      2) FAISS      → 向量下潜到本地 FAISS 索引，检索 Top-K 候选记忆片段
+      3) ReRank     → (可选) 使用交叉注意力模型对候选结果进行深度语义重排序
+
+    API Key 使用 Web Crypto API (AES-GCM 256 + PBKDF2) 加密存储在 localStorage，
+    每次页面加载需输入主密码解密。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArcFess 记忆观测台</title>
+    <style>
+        /* === CSS Variables === */
+        :root {
+            --bg-color: #0d1117;
+            --panel-bg: #161b22;
+            --border-color: #30363d;
+            --text-main: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent-color: #58a6ff;
+            --accent-hover: #1f6feb;
+            --danger-color: #f85149;
+            --success-color: #2ea043;
+            --rerank-color: #a371f7;
+            --warning-color: #d29922;
+        }
+
+        /* === Base Layout & Typography === */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+        }
+
+        h3 {
+            color: #ffffff;
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        /* === Config Panel === */
+        .config-panel {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 15px;
+        }
+
+        /* === Form Elements === */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-size: 13px;
+            margin-bottom: 5px;
+            color: var(--text-muted);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        input[type="text"], input[type="password"], input[type="number"] {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+            flex: 1;
+        }
+
+        input:focus {
+            border-color: var(--accent-color);
+        }
+
+        .btn-secondary {
+            background-color: var(--border-color);
+            color: var(--text-main);
+            border: none;
+            padding: 0 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .btn-secondary:hover {
+            background-color: #484f58;
+        }
+
+        .checkbox-group {
+            flex-direction: row;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        .checkbox-group input {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            margin-bottom: 0;
+            cursor: pointer;
+            color: var(--rerank-color);
+            font-weight: 600;
+        }
+
+        /* === Search Input Area === */
+        .input-column {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 120px;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 12px;
+            border-radius: 6px;
+            resize: vertical;
+            font-family: inherit;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+            font-size: 15px;
+        }
+
+        textarea:focus {
+            border-color: var(--accent-color);
+            outline: none;
+        }
+
+        .btn-launch {
+            background-color: var(--accent-color);
+            color: #ffffff;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.2s;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+        }
+
+        .btn-launch:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn-launch:disabled {
+            background-color: var(--border-color);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        /* === Results / Memory Cards === */
+        .result-column {
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 200px;
+        }
+
+        .memory-card {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .score-high { border-left-color: var(--success-color); }
+        .score-med { border-left-color: var(--warning-color); }
+        .score-low { border-left-color: var(--danger-color); }
+        .score-reranked { border-left-color: var(--rerank-color); }
+
+        .memory-meta {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-size: 13px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 6px;
+        }
+
+        .memory-text {
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.7;
+        }
+
+        /* === Loading & Status Messages === */
+        .loading {
+            text-align: center;
+            color: var(--accent-color);
+            font-style: italic;
+            display: none;
+            padding: 20px 0;
+        }
+        
+        .status-msg {
+            font-size: 13px;
+            margin-top: 5px;
+            text-align: center;
+        }
+        .error-text { color: var(--danger-color); }
+        .success-text { color: var(--success-color); }
+        .rerank-text { color: var(--rerank-color); }
+        .secure-text { color: var(--warning-color); font-size: 12px; margin-top: 4px; display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>ArcFess Memory Tester</h1>
+
+    <!-- API 配置面板：API Key、FAISS 端点、Embedding/ReRank 模型参数 -->
+    <div class="config-panel">
+        <div class="form-group" style="grid-column: 1 / -1;">
+            <label>API Key (本地加密防护)</label>
+            <div class="input-group">
+                <input type="password" id="apiKey" placeholder="sk-...">
+                <button id="saveKeyBtn" class="btn-secondary" title="使用进入密码加密并保存在本地">加密保存</button>
+                <button id="clearKeyBtn" class="btn-secondary" title="清除本地凭据" style="display: none;">清除</button>
+            </div>
+            <div id="securityStatus" class="secure-text">已加载加密凭据</div>
+        </div>
+
+        <div class="form-group">
+            <label>本地 FAISS 检索 URL</label>
+            <input type="text" id="localUrl" value="http://127.0.0.1:8999/query">
+        </div>
+        <div class="form-group">
+            <label>初筛数量 (FAISS Top-K)</label>
+            <input type="number" id="topK" value="10" min="1" max="50">
+        </div>
+        
+        <div class="form-group" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 15px; margin-top: 5px;"></div>
+
+        <div class="form-group">
+            <label>Embedding API URL (完整路径)</label>
+            <input type="text" id="embedApiUrl" value="https://api.siliconflow.cn/v1/embeddings">
+        </div>
+        <div class="form-group">
+            <label>Embedding 模型</label>
+            <input type="text" id="modelName" value="Qwen/Qwen3-Embedding-8B">
+        </div>
+        
+        <div class="form-group" style="grid-column: 1 / -1; border-top: 1px dashed var(--border-color); padding-top: 15px; margin-top: 5px;">
+            <div class="form-group checkbox-group">
+                <input type="checkbox" id="useRerank" checked>
+                <label for="useRerank">启用深度重排序 (ReRank)</label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>ReRank API URL (完整路径)</label>
+            <input type="text" id="rerankApiUrl" value="https://api.siliconflow.cn/v1/rerank">
+        </div>
+        <div class="form-group">
+            <label>ReRank 模型</label>
+            <input type="text" id="rerankModelName" value="Qwen/Qwen3-Reranker-4B">
+        </div>
+    </div>
+
+    <!-- 检索输入区域：输入查询文本并启动探测 -->
+    <div class="input-column">
+        <h3>检索内容输入</h3>
+        <textarea id="searchInput" placeholder="在此处粘贴你要测试的关键词、短句或完整的情境段落..."></textarea>
+        <button id="launchBtn" class="btn-launch">发射探测波</button>
+        <div id="searchStatus" class="status-msg"></div>
+    </div>
+
+    <!-- 检索结果展示区域：显示排序后的记忆卡片 -->
+    <div class="result-column">
+        <h3>深渊回显 (检索结果)</h3>
+        <div class="loading" id="loading">正在进行高维映射与下潜...</div>
+        <div id="searchResult">
+            <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+                等待接收指令。
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    /**
+     * ArcFess Memory Tester — 客户端脚本
+     * ====================================
+     * 文件结构:
+     *   1. 加密模块     — AES-GCM 加密/解密，用于保护 localStorage 中的 API Key
+     *   2. UI 逻辑      — DOM 加载、localStorage 凭据管理、保存/清除按钮交互
+     *   3. 核心探测逻辑  — 三阶段管道 (Embedding → FAISS → ReRank) + 结果渲染
+     *
+     * 外部依赖:
+     *   - 远程 Embedding API (如硅基流动)
+     *   - 本地 FAISS 检索服务 (HTTP)
+     *   - 远程 ReRank API (可选，如硅基流动)
+     */
+    // --- Encryption ---
+    // 加密模块: Web Crypto API - AES-GCM 256 + PBKDF2 密钥派生
+    // 存储键名: STORAGE_KEY = 'arcfess_secure_key'
+    // 加密流程: 主密码 → PBKDF2 派生 256-bit AES 密钥 → 随机 salt(16B) + IV(12B) → AES-GCM 加密 → Base64 输出
+    // 解密流程: Base64 解码 → 提取 salt + IV + 密文 → PBKDF2 同参数派生密钥 → AES-GCM 解密
+    const STORAGE_KEY = 'arcfess_secure_key';
+
+    /**
+     * 将 ArrayBuffer 转换为 Base64 字符串。
+     * @param {ArrayBuffer} buffer - 待转换的字节缓冲区
+     * @returns {string} Base64 编码字符串
+     */
+    function bufferToBase64(buffer) {
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return window.btoa(binary);
+    }
+
+    /**
+     * 将 Base64 字符串解码为 ArrayBuffer。
+     * @param {string} base64 - Base64 编码字符串
+     * @returns {ArrayBuffer} 解码后的字节缓冲区
+     */
+    function base64ToBuffer(base64) {
+        const binary = window.atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes.buffer;
+    }
+
+    /**
+     * 使用 AES-GCM 256 加密明文数据。
+     * 流程: PBKDF2 密钥派生 → 随机 salt (16B) + IV (12B) → AES-GCM 加密 → 拼接 salt+IV+密文 → Base64 输出
+     * @param {string} plaintext - 待加密的明文 (API Key)
+     * @param {string} password - 用户提供的主密码
+     * @returns {Promise<string>} Base64 编码的加密数据 (salt + IV + ciphertext)
+     */
+    async function encryptData(plaintext, password) {
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey(
+            "raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveKey"]
+        );
+        const salt = window.crypto.getRandomValues(new Uint8Array(16));
+        const key = await window.crypto.subtle.deriveKey(
+            {name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256"},
+            keyMaterial, {name: "AES-GCM", length: 256}, false, ["encrypt"]
+        );
+        const iv = window.crypto.getRandomValues(new Uint8Array(12));
+        const encryptedContent = await window.crypto.subtle.encrypt(
+            {name: "AES-GCM", iv: iv}, key, enc.encode(plaintext)
+        );
+
+        const encryptedBytes = new Uint8Array(encryptedContent);
+        const combined = new Uint8Array(salt.byteLength + iv.byteLength + encryptedBytes.byteLength);
+        combined.set(salt, 0);
+        combined.set(iv, salt.byteLength);
+        combined.set(encryptedBytes, salt.byteLength + iv.byteLength);
+
+        return bufferToBase64(combined.buffer);
+    }
+
+    /**
+     * 使用 AES-GCM 256 解密 Base64 编码的加密数据。
+     * 流程: Base64 解码 → 提取 salt(前16B) + IV(16-28B) + 密文(剩余) → PBKDF2 派生密钥 → AES-GCM 解密
+     * @param {string} b64 - Base64 编码的加密数据
+     * @param {string} password - 解密密码
+     * @returns {Promise<string>} 解密后的明文
+     */
+    async function decryptData(b64, password) {
+        const combined = new Uint8Array(base64ToBuffer(b64));
+        const salt = combined.slice(0, 16);
+        const iv = combined.slice(16, 28);
+        const data = combined.slice(28);
+
+        const enc = new TextEncoder();
+        const keyMaterial = await window.crypto.subtle.importKey(
+            "raw", enc.encode(password), {name: "PBKDF2"}, false, ["deriveKey"]
+        );
+        const key = await window.crypto.subtle.deriveKey(
+            {name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256"},
+            keyMaterial, {name: "AES-GCM", length: 256}, false, ["decrypt"]
+        );
+
+        const decrypted = await window.crypto.subtle.decrypt(
+            {name: "AES-GCM", iv: iv}, key, data
+        );
+        return new TextDecoder().decode(decrypted);
+    }
+
+    // --- UI Logic ---
+    // DOMContentLoaded: 管理 localStorage 中加密凭据的加载、保存和清除流程
+    // 凭据生命周期: 页面加载 → 检测加密数据 → 提示密码 → 解密填充 / 用户手动保存 → 加密存储 / 用户清除 → 移除凭据
+    document.addEventListener('DOMContentLoaded', async () => {
+        const savedEncryptedKey = localStorage.getItem(STORAGE_KEY);
+        const apiKeyInput = document.getElementById('apiKey');
+        const saveBtn = document.getElementById('saveKeyBtn');
+        const clearBtn = document.getElementById('clearKeyBtn');
+        const statusText = document.getElementById('securityStatus');
+
+        // 检测到已存储的加密凭据 → 提示用户输入主密码解密
+        if (savedEncryptedKey) {
+            const password = prompt('ArcFess 内存防护已激活。\n请输入访问密码以解密 API Key：');
+            if (password) {
+                try {
+                    const decrypted = await decryptData(savedEncryptedKey, password);
+                    // 解密成功 → 填充 API Key 输入框，切换按钮状态
+                    apiKeyInput.value = decrypted;
+                    statusText.style.display = 'block';
+                    saveBtn.style.display = 'none';
+                    clearBtn.style.display = 'block';
+                } catch (e) {
+                    alert('解密失败：密码错误或数据已损坏。');
+                }
+            }
+        }
+
+        saveBtn.addEventListener('click', async () => {
+            const rawKey = apiKeyInput.value.trim();
+            if (!rawKey) {
+                alert('请先输入要保存的 API Key。');
+                return;
+            }
+            const password = prompt('请设置一个进入密码（主密码），用于加密此 Key：\n请务必牢记，丢失将无法恢复。');
+            if (!password) return;
+            
+            try {
+                // 使用用户主密码加密 API Key 后存入 localStorage
+                const encrypted = await encryptData(rawKey, password);
+                localStorage.setItem(STORAGE_KEY, encrypted);
+                statusText.style.display = 'block';
+                statusText.innerText = '配置已通过 AES-256 加密保存于本地存储。';
+                saveBtn.style.display = 'none';
+                clearBtn.style.display = 'block';
+            } catch (e) {
+                alert('加密过程中发生错误。');
+                console.error(e);
+            }
+        });
+
+        // 清除本地加密凭据：移除 localStorage 项并重置 UI 状态
+        clearBtn.addEventListener('click', () => {
+            if(confirm('确定要清除本地保存的加密凭据吗？')) {
+                localStorage.removeItem(STORAGE_KEY);
+                apiKeyInput.value = '';
+                statusText.style.display = 'none';
+                saveBtn.style.display = 'block';
+                clearBtn.style.display = 'none';
+            }
+        });
+    });
+
+    // --- Core Probe Logic ---
+    // 三阶段记忆检索管道: Embedding → FAISS 初筛 → ReRank 深度重排序
+    // 点击"发射探测波"触发完整流程，依次执行三个阶段后渲染结果
+    document.getElementById('launchBtn').addEventListener('click', async () => {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const text = document.getElementById('searchInput').value.trim();
+        const useRerank = document.getElementById('useRerank').checked;
+        
+        // 输入验证: API Key 和查询文本均不可为空
+        if (!apiKey) {
+            alert('请提供 API Key 以启动引擎。');
+            return;
+        }
+        if (!text) {
+            alert('输入内容不能为空。');
+            return;
+        }
+
+        const btn = document.getElementById('launchBtn');
+        const outputDiv = document.getElementById('searchResult');
+        const loadingDiv = document.getElementById('loading');
+        const statusDiv = document.getElementById('searchStatus');
+
+        // 禁用按钮、清空旧结果、显示加载动画
+        btn.disabled = true;
+        btn.innerText = '探测中...';
+        outputDiv.innerHTML = '';
+        loadingDiv.style.display = 'block';
+        statusDiv.innerHTML = '';
+
+        try {
+            // 阶段 1: Embedding — 将查询文本映射为高维语义向量
+            statusDiv.innerHTML = '<span class="text-muted">阶段 1/3: 正在请求高维向量特征...</span>';
+            const vector = await getEmbedding(text);
+            
+            // 阶段 2: FAISS — 使用向量在本地索引中检索 Top-K 最相似记忆片段
+            statusDiv.innerHTML = '<span class="text-muted">阶段 2/3: 正在潜入本地记忆库进行初筛...</span>';
+            let results = await queryLocalDB(vector);
+            
+            if (useRerank && results.length > 0) {
+                // 阶段 3: ReRank — 使用交叉注意力模型对候选记忆进行深度语义重排序
+                statusDiv.innerHTML = '<span class="rerank-text">阶段 3/3: 正在调用交叉注意力模型进行深度重排序...</span>';
+                const textsToRerank = results.map(r => r.text);
+                const rerankScores = await performRerank(text, textsToRerank);
+                
+                // 用 ReRank 语义相关度分数替换原始向量余弦相似度分数
+                // 保留原始分数 (originalScore) 以便在前端展示时进行对比
+                rerankScores.forEach(item => {
+                    const originalIndex = item.index;
+                    results[originalIndex].originalScore = results[originalIndex].score; 
+                    results[originalIndex].score = item.relevance_score;
+                    results[originalIndex].isReranked = true;
+                });
+                
+                // 按 ReRank 分数降序重新排列结果
+                results.sort((a, b) => b.score - a.score);
+            }
+            // 管道完成，显示成功状态
+            statusDiv.innerHTML = '<span class="success-text">探测与排序完成</span>';
+            renderResults(outputDiv, results);
+        } catch (error) {
+            statusDiv.innerHTML = `<span class="error-text">致命错误: ${error.message}</span>`;
+            outputDiv.innerHTML = '<div class="memory-card score-low">检索中断，请检查控制台或网络。</div>';
+            console.error('ArcFess Probe Error:', error);
+        } finally {
+            loadingDiv.style.display = 'none';
+            btn.disabled = false;
+            btn.innerText = '发射探测波';
+        }
+    });
+
+    /**
+     * 阶段 1: 调用远程 Embedding API 将文本转换为高维向量。
+     * 发送 POST 请求到配置的 Embedding 端点，返回浮点数向量数组。
+     * @param {string} text - 需要向量化的查询文本
+     * @returns {Promise<number[]>} 高维嵌入向量
+     * @throws {Error} 当 API 返回非 200 状态码或响应格式异常时
+     */
+    async function getEmbedding(text) {
+        const endpoint = document.getElementById('embedApiUrl').value.trim();
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const modelName = document.getElementById('modelName').value.trim();
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: modelName,
+                input: text
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`Embedding API 拒绝访问 (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+        if (!data.data || !data.data[0] || !data.data[0].embedding) {
+            throw new Error('未收到有效的 Vector 数据。');
+        }
+
+        return data.data[0].embedding;
+    }
+
+    /**
+     * 阶段 2: 将向量发送到本地 FAISS 服务进行近似最近邻检索。
+     * 返回 Top-K 个最相似的记忆片段及其元数据。
+     * @param {number[]} vector - 由 getEmbedding 生成的高维向量
+     * @returns {Promise<Array<{id: string, text: string, score: number, metadata?: object}>>} 候选记忆列表
+     * @throws {Error} 当本地 FAISS 服务不可达或返回错误时
+     */
+    async function queryLocalDB(vector) {
+        const localUrl = document.getElementById('localUrl').value.trim();
+        const topK = parseInt(document.getElementById('topK').value, 10);
+
+        const response = await fetch(localUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                vector: vector,
+                k: topK
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`本地数据库拒绝访问 (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+        return data.results || [];
+    }
+
+    /**
+     * 阶段 3 (可选): 调用远程 ReRank API 对候选记忆进行深度语义重排序。
+     * 使用交叉注意力模型 (cross-encoder) 计算查询与每个候选文档的语义相关度。
+     * @param {string} query - 原始查询文本
+     * @param {string[]} texts - 候选记忆文本列表
+     * @returns {Promise<Array<{index: number, relevance_score: number}>>} 带索引的重排序结果
+     * @throws {Error} 当 ReRank API 不可达或返回错误时
+     */
+    async function performRerank(query, texts) {
+        const endpoint = document.getElementById('rerankApiUrl').value.trim();
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const modelName = document.getElementById('rerankModelName').value.trim();
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: modelName,
+                query: query,
+                documents: texts 
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`ReRank API 拒绝访问 (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+        return data.results || [];
+    }
+
+    /**
+     * 将检索结果渲染为记忆卡片并插入 DOM 容器。
+     * 卡片颜色根据分数阈值分类:
+     *   - 非 ReRank 模式: score > 0.75 → 绿色 (高相关), > 0.6 → 黄色 (中等), ≤ 0.6 → 红色 (低相关)
+     *   - ReRank 模式: 统一使用紫色边框，并显示原始向量分数作为参考
+     * @param {HTMLElement} container - 结果容器 DOM 元素
+     * @param {Array<{id: string, text: string, score: number, metadata?: object, isReranked?: boolean, originalScore?: number}>} results - 排序后的结果列表
+     */
+    function renderResults(container, results) {
+        if (results.length === 0) {
+            container.innerHTML = '<div class="memory-card" style="text-align:center;">这片记忆海域空空如也。</div>';
+            return;
+        }
+
+        results.forEach((res, index) => {
+            let scoreDisplay = res.score.toFixed(4);
+            let scoreClass = 'score-low';
+            
+            if (res.isReranked) {
+                scoreClass = 'score-reranked';
+                scoreDisplay = `ReRank: ${scoreDisplay}`;
+                if (res.originalScore) {
+                    scoreDisplay += ` (原向量得分: ${res.originalScore.toFixed(4)})`;
+                }
+            } else {
+                // 分数阈值: >0.75 高置信度 (绿色), 0.60-0.75 中等 (黄色), ≤0.60 低相关 (红色)
+                if (res.score > 0.75) scoreClass = 'score-high';
+                else if (res.score > 0.6) scoreClass = 'score-med';
+                scoreDisplay = `相似度: ${scoreDisplay}`;
+            }
+
+            let metaDisplay = '未知坐标';
+            if (res.metadata) {
+                if (res.metadata.chapter_title) metaDisplay = `章节: ${res.metadata.chapter_title}`;
+                else if (res.metadata.index !== undefined) metaDisplay = `对话楼层: ${res.metadata.index}`;
+                else if (res.metadata.name) metaDisplay = `文件: ${res.metadata.name}`;
+                else if (res.metadata.collection_id) metaDisplay = `集合: ${res.metadata.collection_id}`;
+            }
+
+            const card = document.createElement('div');
+            card.className = `memory-card ${scoreClass}`;
+            card.innerHTML = `
+                <div class="memory-meta">
+                    <span><strong>#${index + 1}</strong> | ${scoreDisplay}</span>
+                    <span>${metaDisplay} (ID: ${res.id ? res.id.substring(0,6) + '...' : 'N/A'})</span>
+                </div>
+                <div class="memory-text">${escapeHtml(res.text)}</div>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    /**
+     * 转义 HTML 特殊字符以防止 XSS 攻击。
+     * 将 & < > " ' 替换为对应的 HTML 实体。
+     * @param {string} unsafe - 可能包含 HTML 特殊字符的原始文本
+     * @returns {string} 安全的 HTML 转义文本
+     */
+    function escapeHtml(unsafe) {
+        return unsafe
+             .replace(/&/g, "&amp;")
+             .replace(/</g, "&lt;")
+             .replace(/>/g, "&gt;")
+             .replace(/"/g, "&quot;")
+             .replace(/'/g, "&#039;");
+    }
+</script>
+
+</body>
+</html>
