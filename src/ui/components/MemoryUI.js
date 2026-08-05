@@ -170,6 +170,15 @@ export class MemoryUI {
         // Summarize button click handler
         $('#memory_summarize_btn').off('click').on('click', () => this.handleSummarizeClick());
 
+        // Memory chat send button (Enter 发送, Shift+Enter 换行)
+        $('#memory_send_btn').off('click').on('click', () => this.handleSendClick());
+        $('#memory_input').off('keydown').on('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.handleSendClick();
+            }
+        });
+
         // API source change
         $('#memory_api_source').off('change').on('change', (e) => {
             this.handleApiSourceChange(e.target.value);
@@ -911,6 +920,7 @@ export class MemoryUI {
         }
         const memoryConfig = {
             source: source,
+            detailLevel: this.settings?.memory?.detailLevel || 'normal', // 保留 detailLevel，防止重建对象时被抹掉
             summaryFormat: $('#memory_summary_format').val() || defaultMemorySettings.summaryFormat,
             floorOffset: parseInt($('#memory_floor_offset').val()) || 0,
             // detailLevel 已从UI绑定中移除，仅从 settings.memory.detailLevel 读取
@@ -1605,6 +1615,8 @@ export class MemoryUI {
 
         // Unbind event listeners - 必须与绑定时使用完全一致的事件名
         $('#memory_summarize_btn').off('click');
+        $('#memory_send_btn').off('click');
+        $('#memory_input').off('keydown');
         $('#memory_api_source').off('change');
         $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens').off('change input');
         $('#memory_injection_depth').off('input');

@@ -15,11 +15,9 @@ export const MessageUI = {
     const hidden = getHiddenMessages(context.chat);
     const infoDiv = $('#vectors_enhanced_hidden_info');
     const countSpan = $('#vectors_enhanced_hidden_count');
-    const listDiv = $('#vectors_enhanced_hidden_list');
 
     if (hidden.length > 0) {
       infoDiv.show();
-      listDiv.empty();
 
       // 计算隐藏消息的楼层范围
       const indexes = hidden.map(msg => msg.index).sort((a, b) => a - b);

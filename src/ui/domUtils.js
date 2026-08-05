@@ -59,7 +59,6 @@ export function updateMasterSwitchState(settings) {
 export function toggleSettings(settings) {
   $('#vectors_enhanced_vllm_settings').toggle(settings.source === 'vllm');
   $('#vectors_enhanced_ollama_settings').toggle(settings.source === 'ollama');
-  $('#vectors_enhanced_local_settings').toggle(settings.source === 'transformers');
   $('#vectors_enhanced_transformers_settings').toggle(settings.source === 'transformers');
 }
 

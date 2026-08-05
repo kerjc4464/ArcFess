@@ -551,6 +551,7 @@ export class QuerySettings {
      * Update alpha ratio display (slider value + quota preview)
      */
     updateAlphaDisplay(val) {
+        $('#vectors_enhanced_sense_reason_ratio').val(val);
         $('#sense_reason_ratio_display').text(val.toFixed(2));
         const preLimit = this.settings.rerank_top_n || 20;
         const quota = Math.round(preLimit * val);

@@ -488,6 +488,21 @@
             </button>
           </div>
 
+          <!-- Memory Chat Input (快速记忆响应) -->
+          <div class="memory-chat-input-section" style="margin-top: 15px;">
+            <label for="memory_input">
+              <small>与记忆AI对话 (直接调用上方配置的 API):</small>
+            </label>
+            <textarea id="memory_input"
+                     class="text_pole"
+                     rows="3"
+                     placeholder="向记忆AI发送消息... (Enter 发送, Shift+Enter 换行)"
+                     style="width: 100%; resize: vertical; background-color: var(--black30a);"></textarea>
+            <button id="memory_send_btn" class="menu_button" style="margin-top: 5px; width: 100%; border-color: var(--SmartThemeQuoteColor);">
+              <i class="fa-solid fa-paper-plane"></i> 发送
+            </button>
+          </div>
+
           <!-- Output Area -->
           <div class="memory-output-section" style="margin-top: 15px;">
             <label for="memory_output">
@@ -842,13 +857,15 @@
             <label>
               <input type="radio" name="vectors_position" value="1" />
               <span>聊天内@深度</span>
-              <input id="vectors_enhanced_depth" class="text_pole widthUnset vectors-depth-input" type="number" min="0" max="999" />
-              <span>作为</span>
-              <select id="vectors_enhanced_depth_role" class="text_pole widthNatural">
-                <option value="0">系统</option>
-                <option value="1">用户</option>
-                <option value="2">助手</option>
-              </select>
+              <span id="vectors_enhanced_depth_controls">
+                <input id="vectors_enhanced_depth" class="text_pole widthUnset vectors-depth-input" type="number" min="0" max="999" />
+                <span>作为</span>
+                <select id="vectors_enhanced_depth_role" class="text_pole widthNatural">
+                  <option value="0">系统</option>
+                  <option value="1">用户</option>
+                  <option value="2">助手</option>
+                </select>
+              </span>
             </label>
           </div>
 
@@ -1157,6 +1174,16 @@
             </details>
 
           </details>
+        </div>
+
+        <!-- v7.1 双支混合参数: 理性分支配额 (α) -->
+        <div style="margin-top: 12px; padding: 8px 12px; background-color: var(--black30a); border-radius: 8px; border: 1px solid var(--SmartThemeBorderColor);">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <label for="vectors_enhanced_sense_reason_ratio" title="α: 理性分支在截断池中的配额比例 (0=全感性, 1=全理性)"><small><strong>双支混合参数 α (理性分支配额)</strong></small></label>
+            <span style="font-size: 0.9em; white-space: nowrap;">值: <b id="sense_reason_ratio_display">0.60</b> &nbsp;|&nbsp; 理性配额: <b id="sense_reason_quota_display">12</b></span>
+          </div>
+          <input type="range" id="vectors_enhanced_sense_reason_ratio" min="0" max="1" step="0.05" value="0.6" style="width: 100%; margin-top: 4px;">
+          <small style="color:#888;">0 = 全感性检索，1 = 全理性检索 (Egos)。决定截断池中理性分支的配额比例。</small>
         </div>
 
         <!-- Line 3: BM25 关键词检索 -->

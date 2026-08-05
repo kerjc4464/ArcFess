@@ -1700,30 +1700,11 @@ export class SettingsManager {
   
   /**
    * 初始化实验性设置
+   * 注：use_pipeline 开关已移除 —— 文本处理管道在向量化流程中是无条件运行的，
+   * 该设置从未被任何代码消费，保留只会造成"配置了没反应"的困惑。
    */
   initializeExperimentalSettings() {
-    // 文本处理管道开关
-    $('#vectors_enhanced_use_pipeline')
-      .prop('checked', this.settings.use_pipeline || false)
-      .on('change', () => {
-        this.settings.use_pipeline = $('#vectors_enhanced_use_pipeline').prop('checked');
-        this.updateAndSave();
-        
-        // Log the state change
-        console.log(`Vectors Enhanced: Pipeline mode ${this.settings.use_pipeline ? 'enabled' : 'disabled'}`);
-        
-        // Show notification
-        const message = this.settings.use_pipeline 
-          ? '已启用文本处理管道 (实验性功能)' 
-          : '已禁用文本处理管道，使用传统实现';
-        
-        // toastr is available globally in SillyTavern
-        if (typeof toastr !== 'undefined') {
-          toastr.info(message);
-        } else {
-          console.log(message);
-        }
-      });
+    // 预留：后续实验性设置在此绑定
   }
 
   /**
@@ -1731,9 +1712,11 @@ export class SettingsManager {
    */
   async initializeExternalTaskUI() {
     try {
-      // 动态导入ExternalTaskUI - 使用完整路径解决模块加载问题
-      const modulePath = '/scripts/extensions/third-party/ArcFess/src/ui/components/ExternalTaskUI.js';
-      const { ExternalTaskUI } = await import(modulePath);
+      // 动态导入ExternalTaskUI - 优先相对路径（兼容子路径部署），失败再退回绝对路径
+      let { ExternalTaskUI } = await import('./components/ExternalTaskUI.js').catch(() => ({}));
+      if (!ExternalTaskUI) {
+        ({ ExternalTaskUI } = await import('/scripts/extensions/third-party/ArcFess/src/ui/components/ExternalTaskUI.js'));
+      }
       
       // 创建并初始化外挂任务UI
       const externalTaskUI = new ExternalTaskUI();
@@ -1773,9 +1756,11 @@ export class SettingsManager {
    */
   async initializeVectorStoragePathUI() {
     try {
-      // 动态导入VectorStoragePathUI
-      const modulePath = '/scripts/extensions/third-party/ArcFess/src/ui/components/VectorStoragePathUI.js';
-      const { VectorStoragePathUI } = await import(modulePath);
+      // 动态导入VectorStoragePathUI - 优先相对路径（兼容子路径部署），失败再退回绝对路径
+      let { VectorStoragePathUI } = await import('./components/VectorStoragePathUI.js').catch(() => ({}));
+      if (!VectorStoragePathUI) {
+        ({ VectorStoragePathUI } = await import('/scripts/extensions/third-party/ArcFess/src/ui/components/VectorStoragePathUI.js'));
+      }
       
       // 创建并初始化向量存储路径UI
       const vectorStoragePathUI = new VectorStoragePathUI();
