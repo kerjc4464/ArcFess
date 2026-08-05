@@ -30,21 +30,14 @@ export default DOMUtils;
 
 /**
  * Updates UI state based on master switch.
+ * 禁用时各分区保持可见但置灰（配合 .vectors-disabled 样式），
+ * 避免用户误以为设置面板消失而导致"配置不上"的误判。
  * @param {object} settings The extension settings object.
  */
 export function updateMasterSwitchState(settings) {
   const isEnabled = settings.master_enabled;
 
-  // 控制主要设置区域的显示/隐藏 - 更新为新模板的ID
-  $('#vectors_enhanced_vectorization_settings').toggle(isEnabled);
-  $('#vectors_enhanced_rerank_settings').toggle(isEnabled);
-  $('#vectors_enhanced_injection_settings').toggle(isEnabled);
-  $('#vectors_enhanced_content_settings').toggle(isEnabled);
-  $('#vectors_enhanced_tasks_settings').toggle(isEnabled);
-  $('#vectors_enhanced_actions_settings').toggle(isEnabled);
-  $('#vectors_enhanced_experimental_settings').toggle(isEnabled);
-
-  // 如果禁用，还需要禁用所有输入控件（作为额外保护）
+  // 禁用除主开关外的所有输入控件
   const settingsContainer = $('#vectors_enhanced_container');
   settingsContainer
     .find('input, select, textarea, button')

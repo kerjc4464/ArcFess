@@ -1,11 +1,6 @@
 /**
  * VectorizationSettings Component - Manages vectorization source selection and model configuration
- *
- * Handles:
- * - Source selection (Transformers, vLLM, Ollama)
- * - Model configuration for each source
- * - Vectorization parameters (chunk size, overlap, thresholds)
- * - Source-specific settings validation
+ * (Updated: Throttler Input Box & Range Sync & Full Completeness)
  */
 
 export class VectorizationSettings {
@@ -27,6 +22,10 @@ export class VectorizationSettings {
             ollama: {
                 selector: '#vectors_enhanced_ollama_settings',
                 fields: ['ollama_model', 'ollama_url', 'ollama_keep']
+            },
+            openai: {
+                selector: '#vectors_enhanced_openai_settings',
+                fields: ['openai_model', 'openai_url', 'openai_api_key']
             }
         };
 
@@ -52,10 +51,18 @@ export class VectorizationSettings {
         }
 
         try {
+            // === 核心修改：动态注入 Fusion UI ===
+            this.injectFusionUI(); 
+            // =================================
+
             this.bindEventListeners();
             this.loadCurrentSettings();
             this.updateSourceVisibility();
             this.updatePositionVisibility(); // From InjectionSettings
+            
+            // 填充任务下拉菜单
+            this._populateTaskDropdown();
+            
             this.initialized = true;
             console.log('VectorizationSettings: Initialized successfully');
         } catch (error) {
@@ -64,8 +71,177 @@ export class VectorizationSettings {
         }
     }
 
+/**
+     * [修改] 动态注入 Fusion UI (包含 Batch Size 滑块)
+     */
+    injectFusionUI() {
+        const sourceSelect = $('#vectors_enhanced_source');
+        if (sourceSelect.length === 0) return;
+
+        const targetPoint = sourceSelect.parent(); 
+
+        // 默认值处理
+        const defaultBatchSize = this.settings.gen_batch_size || 6;
+
+        const fusionTemplate = `
+            <hr style="border-color: var(--SmartThemeBorderColor); opacity: 0.3; margin: 15px 0;">
+            
+            <div class="setting-item">
+                <div class="setting-label" style="display:flex; justify-content:space-between;">
+                    <div>
+                        <small>Target Task (目标容器)</small>
+                        <span class="setting-info" title="选择'新建任务'将创建新数据库。选择现有任务将执行增量融合(Fusion)。">ℹ️</span>
+                    </div>
+                    <span id="vectors_refresh_tasks" style="cursor:pointer; opacity:0.7;" title="刷新任务列表">🔄</span>
+                </div>
+                <select id="vectors_target_task" class="text_pole" style="width: 100%; margin-bottom: 5px;">
+                    <option value="__NEW__">✨ 新建任务 (New Task)</option>
+                </select>
+            </div>
+
+            <div class="setting-item" style="margin-top: 10px;">
+                <div class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <small>Generation Batch Size</small>
+                        <span id="vectors_batch_status_label" style="font-size: 0.8em; margin-left: 8px; font-weight: bold;"></span>
+                    </div>
+                    <span class="range_value_label" id="vectors_gen_batch_size_value">${defaultBatchSize}</span>
+                </div>
+                <input type="range" id="vectors_gen_batch_size" min="1" max="30" step="1" value="${defaultBatchSize}" style="width:100%; margin-top: 5px;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.7em; opacity: 0.5; margin-bottom: 2px;">
+                    <span>1 (最稳/Stable)</span>
+                    <span>30 (极速/Fast)</span>
+                </div>
+            </div>
+
+            <div class="setting-item" style="margin-top: 10px;">
+                <div class="setting-label" style="display:flex; justify-content:space-between; align-items:center;">
+                    <small>API Request Delay (ms)</small>
+                    <input type="number" id="vectors_api_delay" class="text_pole" min="0" step="100" value="4500" placeholder="ms" style="width: 80px; padding: 2px 5px; text-align: right;">
+                </div>
+                <input type="range" id="vectors_api_delay_range" min="0" max="10000" step="100" value="4500" style="width:100%; margin-top: 5px;">
+                <small style="color:#888; font-size:0.8em; display:block; margin-top:2px; line-height: 1.4;">
+                    <strong>💡 流量控制指南：</strong><br>
+                    • <strong>Batch Size</strong>: 决定每次发多少块。API 容易报错(500)请调小。<br>
+                    • <strong>Delay</strong>: 决定发完一批歇多久。API 限制频率(RPM)请调大。<br>
+                </small>
+            </div>
+            
+            <hr style="border-color: var(--SmartThemeBorderColor); opacity: 0.3; margin: 15px 0;">
+        `;
+
+        targetPoint.after(fusionTemplate);
+        
+        // 初始化状态文字颜色
+        this._updateBatchStatusUI(defaultBatchSize);
+    }
+
     /**
-     * Bind event listeners for vectorization settings
+     * [新增] 辅助方法：更新 Batch Size 的状态文字和颜色
+     */
+    _updateBatchStatusUI(val) {
+        const value = parseInt(val);
+        const $label = $('#vectors_batch_status_label');
+        
+        if (value <= 3) {
+            $label.text("🐢 安全模式").css('color', '#4caf50'); // 绿色
+        } else if (value <= 8) {
+            $label.text("⚖️ 平衡模式").css('color', 'var(--SmartThemeBodyColor)'); // 默认色
+        } else if (value <= 15) {
+            $label.text("🚀 性能模式").css('color', '#ff9800'); // 橙色
+        } else {
+            $label.text("🔥 狂暴模式").css('color', '#f44336'); // 红色
+        }
+    }
+
+    /**
+     * [修改] 填充任务下拉菜单 (支持自动刷新)
+     */
+    _populateTaskDropdown() {
+        const select = $('#vectors_target_task');
+        if (select.length === 0) return;
+
+        // 保存当前选中的值
+        const currentVal = select.val();
+
+        // 清空现有选项（保留新建）
+        select.find('option:not([value="__NEW__"])').remove();
+
+        try {
+            const context = SillyTavern.getContext();
+            const chatId = context.chatId;
+            
+            if (!chatId) return;
+
+            // 强制从全局变量读取最新设置
+            const latestSettings = window.extension_settings?.vectors_enhanced || this.settings;
+            const allTasks = latestSettings.vector_tasks?.[chatId] || [];
+
+            // 按时间倒序
+            const sortedTasks = [...allTasks].sort((a, b) => b.timestamp - a.timestamp);
+
+            sortedTasks.forEach(task => {
+                const date = new Date(task.timestamp).toLocaleString('zh-CN', {
+                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                });
+                const icon = task.isPartial ? '⚠️' : '📦';
+                const name = task.name || '未命名任务';
+                
+                const opt = $('<option>', {
+                    value: task.taskId,
+                    text: `${icon} ${name} [${date}]`
+                });
+                select.append(opt);
+            });
+
+            // 恢复选中
+            if (currentVal && select.find(`option[value="${currentVal}"]`).length > 0) {
+                select.val(currentVal);
+            } else {
+                select.val('__NEW__');
+            }
+
+            // 重新绑定事件
+            select.off('change').on('change', (e) => {
+                if (e.target.value !== '__NEW__') {
+                    const targetTask = allTasks.find(t => t.taskId === e.target.value);
+                    this._checkFusionGuard(targetTask);
+                }
+            });
+            
+            console.log(`[Vectors] Dropdown refreshed. Found ${allTasks.length} tasks.`);
+
+        } catch (e) {
+            console.error("Fusion Dropdown Error:", e);
+        }
+    }
+
+    /**
+     * [新增] 检查融合兼容性
+     */
+    async _checkFusionGuard(targetTask) {
+        if (!targetTask) return;
+        
+        try {
+            const { FusionManager } = await import('../../core/FusionManager.js');
+            const currentSettings = this.getSettings();
+            
+            const check = FusionManager.checkCompatibility(currentSettings, targetTask);
+            
+            if (!check.compatible) {
+                toastr.error(check.fatal, "禁止合并 (Guard)");
+                $('#vectors_target_task').val('__NEW__');
+            } else if (check.warnings.length > 0) {
+                let msg = check.warnings.map(w => `${w.param}: ${w.old} -> ${w.new}`).join('<br>');
+                toastr.warning(`参数不一致 (建议修正):<br>${msg}`, "Fusion 警告");
+            }
+        } catch (e) {
+            console.error("Fusion Check Failed:", e);
+        }
+    }
+
+    /**
+     * Bind event listeners
      */
     bindEventListeners() {
         // Source selection change
@@ -74,17 +250,57 @@ export class VectorizationSettings {
             this.handleSourceChange(newSource);
         });
 
-        // Model and URL inputs for each source
+        // Model and URL inputs
         this.bindSourceSpecificListeners('transformers');
         this.bindSourceSpecificListeners('vllm');
         this.bindSourceSpecificListeners('ollama');
+        this.bindSourceSpecificListeners('openai');
 
-        // General vectorization parameters
+        // General parameters
         this.bindParameterListeners();
+
+        // === Fusion UI Listeners (Updated) ===
+        
+        // 1. Batch Size 滑块监听 [新增]
+        $(document).on('input', '#vectors_gen_batch_size', (e) => {
+            const val = parseInt(e.target.value);
+            // 更新数字显示
+            $('#vectors_gen_batch_size_value').text(val);
+            // 更新状态文字
+            this._updateBatchStatusUI(val);
+            
+            // 保存到设置
+            this.settings.gen_batch_size = val;
+            this.saveSettings();
+            this.onSettingsChange('gen_batch_size', val);
+        });
+
+        // 2. API Delay 双向绑定
+        $(document).on('input', '#vectors_api_delay', (e) => {
+            const val = e.target.value;
+            $('#vectors_api_delay_range').val(val);
+            // 别忘了保存 Delay 设置
+            // (通常 index.js 会直接读取 DOM，但为了规范最好也保存到 settings)
+        });
+        
+        $(document).on('input', '#vectors_api_delay_range', (e) => {
+            const val = e.target.value;
+            $('#vectors_api_delay').val(val);
+        });
+
+        // 3. 任务列表刷新
+        $(document).on('mousedown', '#vectors_target_task', () => {
+             this._populateTaskDropdown();
+        });
+
+        $(document).on('click', '#vectors_refresh_tasks', () => {
+            this._populateTaskDropdown();
+            toastr.success('任务列表已刷新');
+        });
 
         console.log('VectorizationSettings: Event listeners bound');
 
-        // Listeners from InjectionSettings.js
+        // Injection Settings listeners
         $('#vectors_enhanced_template').on('input', (e) => this.handleFieldChange('template', e.target.value));
         this.contentTagFields.forEach(field => {
             $(`#vectors_enhanced_${field}`).on('input', (e) => {
@@ -117,6 +333,7 @@ export class VectorizationSettings {
 
     /**
      * Bind event listeners for general parameters
+     * (Fixed: Handles both ID formats and registers safety settings)
      */
     bindParameterListeners() {
         const parameters = [
@@ -128,21 +345,28 @@ export class VectorizationSettings {
             'max_results',
             'enabled',
             'show_query_notification',
-            'detailed_notification'
+            'detailed_notification',
+            // 🔥 新增：注册策略与熔断参数
+            'safety_floor',
+            'allow_quota_overflow'
         ];
 
         parameters.forEach(param => {
-            const fieldId = `#vectors_enhanced_${param}`;
-            const field = $(fieldId);
+            // 🔍 智能 ID 查找：尝试带前缀和不带前缀两种 ID
+            let field = $(`#vectors_enhanced_${param}`);
+            if (field.length === 0) {
+                field = $(`#vectors_${param}`);
+            }
 
             if (field.length) {
-                field.on('input change', (e) => {
+                // 先解绑防止重复，再绑定
+                field.off('input change').on('input change', (e) => {
                     let value = e.target.value;
 
                     // Handle different input types
                     if (e.target.type === 'checkbox') {
                         value = e.target.checked;
-                    } else if (e.target.type === 'number') {
+                    } else if (e.target.type === 'number' || e.target.type === 'range') {
                         value = parseFloat(value) || 0;
                     }
 
@@ -276,14 +500,24 @@ export class VectorizationSettings {
 
     /**
      * Load current settings into UI elements
+     * (Fixed: Loads safety settings and Fusion UI elements correctly)
      */
     loadCurrentSettings() {
         console.log('VectorizationSettings: Loading current settings...');
+        
+        // 1. 加载 Fusion UI (Batch Size) - 必须防止为空
+        const batchSize = this.settings.gen_batch_size || 6;
+        const $batchInput = $('#vectors_gen_batch_size');
+        if ($batchInput.length) {
+            $batchInput.val(batchSize);
+            $('#vectors_gen_batch_size_value').text(batchSize);
+            if (this._updateBatchStatusUI) this._updateBatchStatusUI(batchSize);
+        }
 
-        // Load source selection
+        // 2. 加载源选择
         $('#vectors_enhanced_source').val(this.settings.source);
 
-        // Load source-specific fields
+        // 3. 加载源特定设置
         Object.entries(this.sourceConfigs).forEach(([source, config]) => {
             config.fields.forEach(field => {
                 const fieldId = `#vectors_enhanced_${field}`;
@@ -299,15 +533,21 @@ export class VectorizationSettings {
             });
         });
 
-        // Load general parameters
+        // 4. 加载通用参数 (包含新参数)
         const parameters = [
             'chunk_size', 'overlap_percent', 'score_threshold', 'force_chunk_delimiter',
-            'query_messages', 'max_results', 'enabled', 'show_query_notification', 'detailed_notification'
+            'query_messages', 'max_results', 'enabled', 'show_query_notification', 'detailed_notification',
+            // 🔥 新增：加载策略与熔断参数
+            'safety_floor',
+            'allow_quota_overflow'
         ];
 
         parameters.forEach(param => {
-            const fieldId = `#vectors_enhanced_${param}`;
-            const element = $(fieldId);
+            // 🔍 智能 ID 查找
+            let element = $(`#vectors_enhanced_${param}`);
+            if (element.length === 0) {
+                element = $(`#vectors_${param}`);
+            }
 
             if (element.length && this.settings[param] !== undefined) {
                 if (element.attr('type') === 'checkbox') {
@@ -323,7 +563,7 @@ export class VectorizationSettings {
 
         console.log('VectorizationSettings: Settings loaded');
 
-        // Load settings from InjectionSettings.js
+        // 5. 加载注入设置 (InjectionSettings)
         this.injectionFields.forEach(field => {
             const element = $(`#vectors_enhanced_${field}`);
             if (element.length && this.settings[field] !== undefined) {
@@ -416,6 +656,8 @@ export class VectorizationSettings {
      */
     async refresh() {
         console.log('VectorizationSettings: Refreshing...');
+        // 重新填充下拉菜单
+        this._populateTaskDropdown();
         this.loadCurrentSettings();
         this.updateSourceVisibility();
         console.log('VectorizationSettings: Refresh completed');
@@ -482,6 +724,12 @@ export class VectorizationSettings {
         parameters.forEach(param => {
             $(`#vectors_enhanced_${param}`).off('input change');
         });
+        
+        // Remove Fusion Listeners
+        $(document).off('input', '#vectors_api_delay');
+        $(document).off('input', '#vectors_api_delay_range');
+        $(document).off('mousedown', '#vectors_target_task');
+        $(document).off('click', '#vectors_refresh_tasks');
 
         this.initialized = false;
         console.log('VectorizationSettings: Destroyed');

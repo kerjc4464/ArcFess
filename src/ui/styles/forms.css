@@ -1,16 +1,22 @@
-/* Form and Input Styles */
+/* ============================================================
+   Form and Input Styles
+   表单控件、验证状态、分组布局、开关切换的样式
+   ============================================================ */
 
-/* Input validation states */
+/* === 输入验证状态 === */
+/* 验证失败——红色边框 + 浅红背景 */
 .vectors-input-error {
     border-color: var(--vectors-enhanced-error) !important;
     background-color: color-mix(in srgb, var(--vectors-enhanced-error) 5%, transparent);
 }
 
+/* 验证通过——绿色边框 + 浅绿背景 */
 .vectors-input-success {
     border-color: var(--vectors-enhanced-success) !important;
     background-color: color-mix(in srgb, var(--vectors-enhanced-success) 5%, transparent);
 }
 
+/* 验证消息气泡（错误/成功的文本提示） */
 .vectors-validation-message {
     font-size: 0.85em;
     margin-top: var(--vectors-spacing-xs);
@@ -28,7 +34,7 @@
     background: color-mix(in srgb, var(--vectors-enhanced-success) 10%, transparent);
 }
 
-/* Form groups */
+/* === 表单分组布局 === */
 .vectors-form-group {
     margin-bottom: var(--vectors-spacing-md);
 }
@@ -39,13 +45,14 @@
     font-weight: 500;
 }
 
+/* 组内控件宽度自适应填满 */
 .vectors-form-group input,
 .vectors-form-group select,
 .vectors-form-group textarea {
     width: 100%;
 }
 
-/* Radio groups */
+/* === 单选按钮组（横向排列，可换行） === */
 .vectors-radio-group {
     display: flex;
     gap: var(--vectors-spacing-md);
@@ -59,11 +66,11 @@
     cursor: pointer;
 }
 
-/* Inline forms */
+/* === 内联表单（横向排列的紧凑表单） === */
 .vectors-inline-form {
     display: flex;
     gap: var(--vectors-spacing-sm);
-    align-items: end;
+    align-items: end;                     /* 底部对齐，使控件在同一水平线 */
 }
 
 .vectors-inline-form .vectors-form-group {
@@ -71,7 +78,8 @@
     margin-bottom: 0;
 }
 
-/* Settings groups */
+/* === 设置分组卡片 === */
+/* 带背景色的设置面板，按功能分块 */
 .vectors-settings-group {
     background: var(--SmartThemeBlurTintColor);
     border-radius: var(--vectors-radius-md);
@@ -84,7 +92,7 @@
     color: var(--vectors-enhanced-primary);
 }
 
-/* Toggle switches */
+/* === 开关切换（Toggle Checkbox） === */
 .vectors-toggle {
     display: inline-flex;
     align-items: center;
@@ -92,10 +100,11 @@
 }
 
 .vectors-toggle input[type="checkbox"] {
-    width: auto;
+    width: auto;                          /* 复选框恢复默认宽度 */
 }
 
-/* Number inputs with units */
+/* === 带单位的数字输入框 === */
+/* 如 "60 %"、"100 ms"，输入框和单位标签水平排列 */
 .vectors-input-with-unit {
     display: flex;
     align-items: center;

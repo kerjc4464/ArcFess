@@ -259,8 +259,15 @@ export class ProgressManager {
         this.progressBar.css('width', `${percentage}%`);
         
         // Update text with block count and message
-        const displayText = `${this.progressState.message} (${this.progressState.current}/${this.progressState.total})`;
-        this.progressText.text(displayText);
+        const displayText = `
+            <div class="progress-message-primary" style="font-weight: 500; margin-bottom: 2px;">
+                ${this.progressState.message}
+            </div>
+            <div class="progress-message-secondary" style="font-size: 0.85em; opacity: 0.8;">
+                (${this.progressState.current} / ${this.progressState.total}) - ${percentage}%
+            </div>
+        `;
+        this.progressText.html(displayText);
 
         // Update container classes based on state
         this.progressContainer.removeClass('error complete').addClass('active');

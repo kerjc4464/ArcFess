@@ -1,4 +1,7 @@
-/* Task List and Management Styles */
+/* ============================================================
+   Task List and Management Styles
+   任务列表面板、任务状态指示、任务操作按钮的样式
+   ============================================================ */
 
 .vectors-task-list {
     border: 1px solid var(--vectors-enhanced-border);

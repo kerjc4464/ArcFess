@@ -57,12 +57,23 @@ import { ContentSelectionSettings } from './src/ui/components/ContentSelectionSe
 import { ProgressManager } from './src/ui/components/ProgressManager.js';
 import { EventManager } from './src/ui/EventManager.js';
 import { StateManager } from './src/ui/StateManager.js';
-import { getMessages, createVectorItem, getHiddenMessages } from './src/utils/chatUtils.js';
+import { getMessages, createVectorItem, getHiddenMessages, getTextWithoutAttachments } from './src/utils/chatUtils.js';
 import { StorageAdapter } from './src/infrastructure/storage/StorageAdapter.js';
 import { VectorizationAdapter } from './src/infrastructure/api/VectorizationAdapter.js';
 import { eventBus } from './src/infrastructure/events/eventBus.instance.js';
 import { RerankService } from './src/services/rerank/index.js';
-
+/**
+ * 辅助函数：从全局设置中提取纯净的向量化参数，剔除任务列表防止递归爆炸
+ * (这是解决 "Settings could not be saved" 的关键)
+ */
+function getCleanSettings(settings) {
+    const clean = { ...settings };
+    // 移除巨大的任务列表引用
+    if (clean.vector_tasks) delete clean.vector_tasks; 
+    // 移除其他可能导致循环引用的字段
+    if (clean.content_tags) delete clean.content_tags;
+    return clean;
+}
 /**
  * @typedef {object} HashedMessage
  * @property {string} text - The hashed message text
@@ -78,15 +89,23 @@ import { RerankService } from './src/services/rerank/index.js';
  * @property {boolean} selected - Whether the item is selected for vectorization
  */
 
-const MODULE_NAME = 'vectors-enhanced';
+window.saveSettingsDebounced = saveSettingsDebounced;
+window.extension_settings = extension_settings; // [新增] 打通外挂管理器的数据桥梁
 
-export const EXTENSION_PROMPT_TAG = '3_vectors';
+const MODULE_NAME = 'ArcFess';
+
+export const EXTENSION_PROMPT_TAG = '3_vectors_enhanced';
 export const MEMORY_EXTENSION_TAG = '4_memory';
 
 // 保存最后注入的内容，供预览功能使用
 let lastInjectedContent = null;
 let lastInjectedStats = null;
 let lastQueryDetails = null; // 保存查询的详细信息，包括重排前后的数据
+
+// --- 执行锁相关变量 ---
+let isQuerying = false;          // 标记是否正在检索
+let lastQueryTimestamp = 0;      // 记录上次成功触发的时间戳
+const QUERY_COOLDOWN = 1500;     // 冷却时间设为 1.5 秒
 
 
 // Global ActionButtons instance (initialized in jQuery ready)
@@ -104,6 +123,34 @@ let globalSettingsManager = null;
 const settings = {
   // Master switch - controls all plugin functionality
   master_enabled: true, // 主开关：控制整个插件的所有功能，默认启用
+  realtime_sync_enabled: false, // 实时增量同步开关
+  realtime_sync_user: true, // 同步用户消息
+  realtime_sync_assistant: true, // 同步AI消息
+  realtime_sync_hidden: false, // 同步隐藏消息
+  realtime_retrieval_enabled: true, // 启用实时记忆检索
+  realtime_quota: 5, // 实时专属保底
+  realtime_boost: 1.0, // 实时专属倍率
+
+  // Hierarchical Realtime Engine settings
+  ve_hierarchical_floor_enabled: false,
+  ve_hierarchical_floor_trigger: 30,
+  ve_hierarchical_date_enabled: false,
+  ve_hierarchical_date_tag: "<ArcTime:\\s*(.*?)\\s*>",
+  ve_hierarchical_inject_date_rule: true,
+  ve_hierarchical_big_trigger: 4,
+  ve_hierarchical_inject_count: 5,
+  ve_hierarchical_prompt: "请总结以下内容的剧情发展，保留关键细节，字数不要超过100字。",
+  ve_hierarchical_big_prompt: "请根据以下数个子事件，总结提炼出这一阶段整体的情节大纲，字数不要超过200字。",
+  ve_hierarchical_manager_prompt_r1: '你是一个记忆总管。根据用户目前输入，若需要查询历史记忆来辅助回答，请大结目录中挑选出一个或数个最相关的大结名称或小结名称，并以如下JSON数组格式返回：[{"target": "大结的名称或ID", "reason": "原因"}...]。如果不需要查询，请直接回复空数组 []。绝对不要返回除JSON以外的其他废话。',
+  ve_hierarchical_manager_prompt_r2: '你已经锁定了目标大结，现在请在以下子事件中，挑选出最相关的几个具体小结，并为每一个小结提供具体的相似检索词数组用于执行精确检索。必须严格以如下JSON格式返回：[{"target": "小结ID", "queries": ["关键词1", "关键词2"]}...]。绝对不能回复其他废话。',
+  ve_summary_api_type: "main",
+  ve_summary_api_url: "",
+  ve_summary_api_key: "",
+  ve_summary_api_model: "",
+  ve_manager_api_type: "main",
+  ve_manager_api_url: "",
+  ve_manager_api_key: "",
+  ve_manager_api_model: "",
 
   // Vector source settings
   source: 'transformers',
@@ -114,11 +161,17 @@ const settings = {
   ollama_model: 'rjmalagon/gte-qwen2-1.5b-instruct-embed-f16',
   ollama_url: '', // ollama API地址
   ollama_keep: false,
+  openai_model: 'BAAI/bge-m3',
+  openai_url: 'https://api.siliconflow.cn/v1',
+  openai_api_key: '', // OpenAI API key
 
   // General vectorization settings
   chunk_size: 768,
   overlap_percent: 0,
   score_threshold: 0.25,
+  safety_floor: 0.05, // 🛡️ 新增：保底熔断阈值
+  allow_quota_overflow: true, // 🛡️ 新增：允许配额超标
+  gen_batch_size: 6, // 🟢 新增：默认批次大小
   force_chunk_delimiter: '',
   // lightweight_storage: 已移除，所有文本都存储在向量数据库中
 
@@ -135,8 +188,70 @@ const settings = {
   rerank_apiKey: '',
   rerank_model: 'Pro/BAAI/bge-reranker-v2-m3',
   rerank_top_n: 20,
-  rerank_hybrid_alpha: 0.7, // Rerank score weight
+  rerank_hybrid_alpha: 1.0, // Rerank score weight (v7.1: pure reranker, no hybrid)
   rerank_success_notify: true, // 是否显示Rerank成功通知
+  rerank_use_proxy: true, // Rerank 走后端代理解决 CORS
+
+  // Thought Engine settings
+  thought_engine_enabled: false,
+  thought_engine_use_proxy: true,
+  thought_engine_proxy_url: '',
+  thought_engine_url: 'https://api.siliconflow.cn/v1/chat/completions',
+  thought_engine_apiKey: '',
+  thought_engine_auth_type: 'bearer',
+  thought_engine_model: 'Qwen/Qwen2.5-7B-Instruct',
+  thought_engine_timeout: 90,
+  thought_engine_max_tokens: 4096,
+  thought_engine_temperature: 0.9,
+  thought_engine_top_p: 1.0,
+  thought_engine_top_k: 0,
+  thought_engine_frequency_penalty: 0,
+  thought_engine_presence_penalty: 0,
+  thought_engine_reasoning_effort: '',
+  thought_engine_context_size: 3,
+  thought_engine_prompt: '你是一个记忆检索分析中枢。请按以下步骤思考，最后输出检索关键词：\n\n第一步-场景识别：分析最近对话中的时间/地点/角色状态/情节走向\n第二步-意图推断：基于场景，推断用户深层需求（创作方向/情感倾向/剧情预期）\n第三步-关键词输出：将意图转化为精确的向量检索关键词\n\n严格按格式输出（不要加任何额外解释）：\n场景：... | 意图：... | 关键词：关键词1 关键词2 关键词3\n\n最近对话：\n{{chat_history}}',
+
+  // v7.1 Thought Engine modes
+  thought_engine_mode: 'cot', // 'cot' | 'multi_call'
+  thought_engine_content_mode: 'strip_think', // 'strip_think' | 'content_only' | 'raw'
+  thought_engine_step1_prompt: '分析以下对话的场景与上下文（时间、地点、角色状态、情节走向）。只输出简洁的场景描述，不超过100字。\n\n{{chat_history}}',
+  thought_engine_step2_prompt: '基于以下场景分析，推断用户的深层意图和需求（创作方向、情感倾向、剧情预期）。只输出意图描述，不超过100字。\n\n场景分析：{{scene_analysis}}\n\n对话：{{chat_history}}',
+  thought_engine_step3_prompt: '基于以下完整分析，将意图转化为精确的向量检索关键词（实体名、动作、情感、设定等）。只输出关键词，用空格分隔，不超过30字。\n\n场景：{{scene_analysis}}\n意图：{{intent_analysis}}\n\n对话：{{chat_history}}',
+
+  // v7.2 Per-Step custom API override (multi_call mode)
+  thought_engine_step1_enabled: true,
+  thought_engine_step1_custom: false,
+  thought_engine_step1_url: '',
+  thought_engine_step1_apiKey: '',
+  thought_engine_step1_model: '',
+  thought_engine_step1_context_size: '',
+  thought_engine_step1_max_tokens: '',
+  thought_engine_step1_timeout: '',
+  thought_engine_step2_enabled: true,
+  thought_engine_step2_custom: false,
+  thought_engine_step2_url: '',
+  thought_engine_step2_apiKey: '',
+  thought_engine_step2_model: '',
+  thought_engine_step2_context_size: '',
+  thought_engine_step2_max_tokens: '',
+  thought_engine_step2_timeout: '',
+  thought_engine_step3_enabled: true,
+  thought_engine_step3_custom: false,
+  thought_engine_step3_url: '',
+  thought_engine_step3_apiKey: '',
+  thought_engine_step3_model: '',
+  thought_engine_step3_context_size: '',
+  thought_engine_step3_max_tokens: '',
+  thought_engine_step3_timeout: '',
+
+  // v7.3 重试设置（Agent模式多步调用容错）
+  thought_engine_retry_enabled: true,
+  thought_engine_retry_count: 3,
+  thought_engine_retry_delay: 1000,
+
+  // 双支混合参数
+  sense_reason_ratio: 0.6, // α: 理性分支在截断池中的配额比例 (0=全感性, 1=全理性)
+  // pre_rerank_limit → 统一使用 rerank_top_n
 
   // Experimental settings
   query_instruction_enabled: false, // Enable query instruction
@@ -152,8 +267,25 @@ const settings = {
   rerank_deduplication_enabled: false, // Enable Rerank deduplication
   rerank_deduplication_instruction: 'Execute the following operations:\n1. Sort documents by relevance in descending order\n2. Consider documents as duplicates if they meet ANY of these conditions:\n   - Core content overlap exceeds 60% (reduced from 80% for better precision)\n   - Contains identical continuous passages of 5+ words\n   - Shares the same examples, data points, or evidence\n3. When evaluating duplication, consider metadata differences:\n   - Different originalIndex values indicate temporal separation\n   - Different chunk numbers (chunk=X/Y) from the same entry should be preserved\n   - Different floor numbers represent different chronological positions\n   - Different world info entries or chapter markers indicate distinct contexts\n4. For identified duplicates, keep only the most relevant one, demote others to bottom 30% positions (reduced from 50% for gentler deduplication)', // Rerank deduplication instruction
 
+  // Contextual Compression (LLM Summarization)
+  compression_enabled: false,
+  compression_url: 'https://api.groq.com/openai/v1/chat/completions',
+  compression_apiKey: '',
+  compression_model: 'llama3-8b-8192',
+  compression_temperature: 0.7,
+  compression_max_tokens: 4096,
+  compression_top_p: 1.0,
+  compression_top_k: 0,
+  compression_frequency_penalty: 0,
+  compression_presence_penalty: 0,
+  compression_reasoning_effort: '',
+  compression_context_messages: 3,
+  compression_batch_size: 5,
+  compression_use_proxy: false,
+  compression_prompt: '你是一个精准的记忆过滤中枢。请判断下面的历史记忆是否对当前对话有帮助。如果有，请提取并总结其最核心的内容（至少150字），请务必在总结的最开头保留原记忆发生的时间日期等元数据（如[2026-xx-xx]）；如果完全无关，请仅输出“【丢弃】”二字。',
+
   // Injection settings
-  template: '<must_know>以下是从相关背景知识库，包含重要的上下文、设定或细节：\n{{text}}</must_know>',
+  template: '<recalled_memories>\n以下是从记忆库检索到的相关片段，已按语义相关性从高到低排列。\n请从中选择最自然、贴合上下文的引用融入回复，不要求全部引用：\n\n{{text}}\n</recalled_memories>',
   position: extension_prompt_types.IN_PROMPT,
   depth: 2,
   depth_role: extension_prompt_roles.SYSTEM,
@@ -245,7 +377,7 @@ const settings = {
 
   // Memory management settings
   memory: {
-    source: 'main',
+    source: 'google_openai', // 默认使用 Google（与模板下拉选项一致，'main' 不是合法值）
     detailLevel: 'normal', // 默认详细程度
     maxTokens: 8192, // 默认最大token数
     google: {
@@ -279,7 +411,25 @@ const settings = {
 };
 
 const moduleWorker = new ModuleWorkerWrapper(synchronizeChat);
-const cachedVectors = new Map(); // Cache for vectorized content
+
+/**
+ * LRU Cache with size limit
+ * Extends Map to maintain full API compatibility while evicting oldest entries
+ */
+class LRUCache extends Map {
+    constructor(maxSize) {
+        super();
+        this.maxSize = maxSize;
+    }
+    set(key, value) {
+        const existed = this.delete(key);
+        if (!existed && this.size >= this.maxSize) {
+            this.delete(this.keys().next().value);
+        }
+        super.set(key, value);
+    }
+}
+const cachedVectors = new LRUCache(50); // Cache for vectorized content, max 50 entries
 let syncBlocked = false;
 
 // 创建存储适配器实例
@@ -375,11 +525,40 @@ async function removeVectorTask(chatId, taskId) {
   const tasks = getChatTasks(chatId);
   const index = tasks.findIndex(t => t.taskId === taskId);
   if (index !== -1) {
-    // Delete the vector collection
-    await storageAdapter.purgeVectorIndex(`${chatId}_${taskId}`);
+    // === 修复开始：使用 TaskID 物理删除 ===
+    try {
+        await storageAdapter.deleteTask(taskId);
+        
+        // 清理内存缓存
+        const collectionId = `${chatId}_${taskId}`;
+        if (cachedVectors && cachedVectors.has(collectionId)) {
+            cachedVectors.delete(collectionId);
+        }
+    } catch (e) {
+        console.error("Task deletion failed:", e);
+    }
+    // === 修复结束 ===
+
     // Remove from tasks list
     tasks.splice(index, 1);
     settings.vector_tasks[chatId] = tasks;
+
+    // === 新增：清理引用此任务的所有外挂任务 ===
+    let externalCleaned = 0;
+    for (const [otherChatId, otherTasks] of Object.entries(settings.vector_tasks)) {
+        if (!Array.isArray(otherTasks)) continue;
+        const beforeCount = otherTasks.length;
+        const filtered = otherTasks.filter(t => !(t.type === 'external' && t.sourceTaskId === taskId));
+        if (filtered.length !== beforeCount) {
+            settings.vector_tasks[otherChatId] = filtered;
+            externalCleaned += (beforeCount - filtered.length);
+        }
+    }
+    if (externalCleaned > 0) {
+        console.log(`Vectors: Removed ${externalCleaned} external task reference(s) pointing to deleted task ${taskId}`);
+    }
+    // === 新增结束 ===
+
     Object.assign(extension_settings.vectors_enhanced, settings);
     saveSettingsDebounced();
   }
@@ -596,20 +775,18 @@ async function getRawContentForScanning() {
 }
 /**
  * Gets all vectorizable content based on provided settings
- * @param {object} contentSettings Optional content settings, defaults to global settings
- * @returns {Promise<VectorItem[]>} Array of vector items
+ * (v9.5 File Masquerade Edition)
  */
 async function getVectorizableContent(contentSettings = null) {
   const items = [];
   const context = getContext();
   const selectedContent = contentSettings || settings.selected_content;
 
-  // Chat messages
+  // 1. Chat messages (Normal)
   if (selectedContent.chat.enabled && context.chat) {
         const chatSettings = selectedContent.chat;
         const rules = chatSettings.tag_rules || [];
 
-        // 使用新的 getMessages 函数获取过滤后的消息
         const messageOptions = {
             includeHidden: chatSettings.include_hidden || false,
             types: chatSettings.types || { user: true, assistant: true },
@@ -621,72 +798,62 @@ async function getVectorizableContent(contentSettings = null) {
 
         messages.forEach(msg => {
             let extractedText;
-            // 检查是否为首楼（index === 0）或用户楼层（msg.is_user === true）
             if (msg.index === 0 || msg.is_user === true) {
-                // 首楼或用户楼层：使用完整的原始文本，不应用标签提取规则
                 extractedText = msg.text;
             } else {
-                // 其他楼层：应用标签提取规则
                 extractedText = extractTagContent(msg.text, rules, settings.content_blacklist || []);
             }
-
-            // 对于预览，text 和 rawText 都应该是标签提取后的结果
-            // createVectorItem 会在 rawText 为 null 时自动使用 text
             items.push(createVectorItem(msg, extractedText, extractedText));
         });
     }
 
-  // Files
+  // 2. Files (🎭 Masquerading as Chat)
   if (selectedContent.files.enabled) {
     const fileMap = getAllAvailableFiles();
     const allFiles = Array.from(fileMap.values());
     console.debug(`Vectors: Total unique files found: ${allFiles.length}`);
-    console.debug(`Vectors: Selected files in settings: ${selectedContent.files.selected.length}`, selectedContent.files.selected);
 
     let processedFileCount = 0;
-    let fileIndex = 0;  // 为文件添加索引
+    let fileIndex = 0;
+    
     for (const file of allFiles) {
       if (!selectedContent.files.selected.includes(file.url)) continue;
 
       try {
         const text = await getFileAttachment(file.url);
         if (text && text.trim()) {
+          // 🔥🔥🔥 核心修改：身份伪装 🔥🔥🔥
           items.push({
-            type: 'file',
+            type: 'chat', // <--- 强行改为 chat，骗过检索系统
             text: text,
             metadata: {
               name: file.name,
               url: file.url,
               size: file.size,
-              originalIndex: fileIndex,  // 添加原始索引
+              // 给一个超大的虚假楼层，确保它排在真实聊天记录后面
+              originalIndex: 1000000 + fileIndex,  
+              index: 1000000 + fileIndex, 
+              is_user: false, // 伪装成 AI 发言
+              is_file_masked: true // 标记：这是一个伪装的文件
             },
             selected: true,
           });
           processedFileCount++;
-          fileIndex++;  // 递增文件索引
-          console.debug(`Vectors: Successfully processed file: ${file.name} with index ${fileIndex - 1}`);
+          fileIndex++;
+          console.debug(`Vectors: File masquerading as chat: ${file.name}`);
         } else {
-          console.warn(`Vectors: File ${file.name} is empty or failed to read`);
+          console.warn(`Vectors: File ${file.name} is empty`);
         }
       } catch (error) {
         console.error(`Vectors: Error processing file ${file.name}:`, error);
-        // 也在用户界面显示文件处理失败的信息
         toastr.warning(`文件 "${file.name}" 处理失败: ${error.message}`);
       }
     }
-
-    console.debug(`Vectors: Actually processed ${processedFileCount} files out of ${selectedContent.files.selected.length} selected`);
   }
 
-  // World Info
+  // 3. World Info (Normal)
   if (selectedContent.world_info.enabled) {
     const entries = await getSortedEntries();
-
-    // 调试：显示实际选择的世界信息
-    console.debug('Vectors: Selected world info:', selectedContent.world_info.selected);
-    const totalSelected = Object.values(selectedContent.world_info.selected).flat().length;
-    console.debug(`Vectors: Total selected world info entries: ${totalSelected}`);
-
     let processedWICount = 0;
 
     for (const entry of entries) {
@@ -706,33 +873,19 @@ async function getVectorizableContent(contentSettings = null) {
         },
         selected: true,
       });
-
       processedWICount++;
-      console.debug(`Vectors: Successfully processed world info entry: ${entry.comment || entry.uid} from world ${entry.world}`);
     }
-
-    console.debug(`Vectors: Actually processed ${processedWICount} world info entries out of ${totalSelected} selected`);
   }
 
-  // 最终调试信息
+  // Debug Stats
   const finalCounts = {
     chat: items.filter(item => item.type === 'chat').length,
-    file: items.filter(item => item.type === 'file').length,
+    file: items.filter(item => item.type === 'file').length, // 应该是 0
     world_info: items.filter(item => item.type === 'world_info').length,
     total: items.length
   };
 
-  console.debug('Vectors: Final getVectorizableContent result:', {
-    finalCounts,
-    settings: {
-      chat_enabled: selectedContent.chat.enabled,
-      files_enabled: selectedContent.files.enabled,
-      files_selected_count: selectedContent.files?.selected?.length || 0,
-      wi_enabled: selectedContent.world_info.enabled,
-      wi_selected_count: Object.values(selectedContent.world_info?.selected || {}).flat().length
-    }
-  });
-
+  console.debug('Vectors: Content extraction complete (Files masked as Chat):', finalCounts);
   return items;
 }
 
@@ -957,6 +1110,8 @@ function analyzeTaskOverlap(chatId, currentSettings) {
         });
       }
     }
+
+    // Initialize main UI manager
 
     console.debug('Vectors: File overlap analysis:', {
       currentSelected: currentSettings.files.selected,
@@ -1196,557 +1351,371 @@ function createIncrementalSettings(currentSettings, chatId, conflicts) {
  */
 
 /**
- * Pipeline version of performVectorization
- * Uses the complete text processing pipeline: Extract → Process → Dispatch → Execute
- * @param {Object} contentSettings - Content settings
- * @param {string} chatId - Chat ID
- * @param {boolean} isIncremental - Whether this is incremental
- * @param {Array} items - Items to vectorize
- * @returns {Promise<Object>} Result with success status and metadata
+ * Pipeline version of performVectorization (v9.6 File Masquerade Support)
+ * 包含：识别伪装文件并强制切分、动态Batch、中断恢复
  */
 async function performVectorization(contentSettings, chatId, isIncremental, items, options = {}) {
-  console.log('Pipeline: Starting FULL pipeline processing with settings:', JSON.stringify(contentSettings, null, 2));
+  console.log('Pipeline: Starting Vectorization (v9.6 Masquerade Fix)...');
   const { skipDeduplication = false, taskType = 'vectorization', customTaskName = null } = options;
 
-  // Import all pipeline components
+  // 1. 获取 UI 设置
+  const targetTaskId = $('#vectors_target_task').val();
+  const isFusionMode = targetTaskId && targetTaskId !== '__NEW__';
+  
+  // 动态导入
   const { pipelineIntegration } = await import('./src/core/pipeline/PipelineIntegration.js');
-  const { ChatExtractor } = await import('./src/core/extractors/ChatExtractor.js');
-  const { FileExtractor } = await import('./src/core/extractors/FileExtractor.js');
-  const { WorldInfoExtractor } = await import('./src/core/extractors/WorldInfoExtractor.js');
+  const { FusionManager } = await import('./src/core/FusionManager.js');
 
-  // 声明在外部作用域的变量，以便在 catch 块中访问
-  let allProcessedChunks = [];
-  let taskId;
-  let taskName;
-  let correctedSettings;
-  let actualProcessedItems;
-  let lastSavedChunk = null; // 追踪最后成功保存的 chunk
+  // ==========================================
+  // 🔪 预切分逻辑 (Pre-Slicer) - 修复伪装文件的切分问题
+  // ==========================================
+  
+  const readFileAsText = (file) => {
+      return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target.result);
+          reader.onerror = (e) => reject(e);
+          reader.readAsText(file);
+      });
+  };
 
   try {
-    // Initialize pipeline with full functionality
+      // 🔥 核心修复：检查 type 为 file 或者 被标记为伪装的文件
+      if (items.some(i => i.type === 'file' || i.metadata?.is_file_masked)) {
+          const expandedItems = [];
+          
+          let separator = $('#vectors_custom_separator').val();
+          if (!separator || separator.trim() === '') {
+              separator = '#####ARCMEMORYCUT#####'; 
+              console.log(`[Pre-Slicer] 启用Arc协议分隔符: "${separator}"`);
+          } else {
+              console.log(`[Pre-Slicer] 使用UI分隔符: "${separator}"`);
+          }
+          
+          toastr.info('正在执行外科手术级切分...', '系统消息');
+
+          for (const item of items) {
+              // 🔥 核心修复：对伪装文件也执行切分
+              if (item.type === 'file' || item.metadata?.is_file_masked) {
+                  console.log(`[Pre-Slicer] Processing: ${item.metadata.name}`);
+                  
+                  // 获取文本：如果是真实文件读文件，如果是伪装Chat直接读text
+                  let rawText = "";
+                  if (item.file) {
+                      rawText = await readFileAsText(item.file);
+                  } else if (item.metadata.url && !item.text) {
+                      rawText = await fetch(item.metadata.url).then(r => r.blob()).then(readFileAsText);
+                  } else {
+                      rawText = item.text || "";
+                  }
+
+                  const cleanText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                  
+                  let chunks = cleanText.split(separator);
+                  chunks = chunks.filter(c => c.trim().length > 0);
+                  
+                  console.log(`[Pre-Slicer] 切分为 ${chunks.length} 个记忆碎片`);
+
+                  const baseFileIndex = item.metadata.originalIndex || 0;
+
+                  chunks.forEach((chunkText, idx) => {
+                      const compoundIndex = (baseFileIndex * 100000) + idx;
+                      
+                      // 保持原来的类型（如果是chat伪装的就继续用chat）
+                      const finalType = item.type === 'chat' ? 'chat' : 'file';
+
+                      expandedItems.push({
+                          type: finalType, 
+                          text: chunkText.trim(), 
+                          content: chunkText.trim(),
+                          metadata: { 
+                              ...item.metadata, 
+                              originalIndex: compoundIndex, 
+                              fileName: item.metadata.name,
+                              isManualChunk: true,
+                              chunkIndex: idx,
+                              // 确保伪装标记传递下去
+                              is_file_masked: item.metadata?.is_file_masked
+                          }
+                      });
+                  });
+              } else {
+                  expandedItems.push(item);
+              }
+          }
+          items = expandedItems;
+      }
+  } catch (err) {
+      console.error("预切分异常:", err);
+      toastr.error("切分失败: " + err.message);
+  }
+
+  // ==========================================
+  // 🛡️ 启动引擎
+  // ==========================================
+
+  let allProcessedChunksCount = 0; 
+  let taskId = isFusionMode ? targetTaskId : generateTaskId(); 
+  let taskName;
+  let targetTaskObj = null;
+  let lastSavedChunk = null; 
+  let vectorsInserted = false; 
+
+  const processedItemsSummary = { chat: [], files: [], world_info: [] };
+
+  try {
+    if (isFusionMode) {
+        const tasks = getChatTasks(chatId);
+        targetTaskObj = tasks.find(t => t.taskId === targetTaskId);
+        if (!targetTaskObj) throw new Error("目标任务不存在");
+
+        const check = FusionManager.checkCompatibility(settings, targetTaskObj);
+        if (!check.compatible) throw new Error(check.fatal);
+
+        const filterResult = FusionManager.filterContent(items, targetTaskObj);
+        items = filterResult.items; 
+        
+        if (filterResult.skippedCount > 0) toastr.info(`跳过 ${filterResult.skippedCount} 条重复`, "ArcFess Fusion");
+        if (items.length === 0) {
+             toastr.success("无需更新。", "完成");
+             return { success: true };
+        }
+    }
+
     if (!pipelineIntegration.isEnabled()) {
-      console.log('Pipeline: Initializing complete pipeline system...');
-      await pipelineIntegration.initialize({
-        vectorizationAdapter: vectorizationAdapter,
-        settings: settings
-      });
+      await pipelineIntegration.initialize({ vectorizationAdapter, settings });
       pipelineIntegration.setEnabled(true);
     }
 
-    // Generate task metadata
-    if (customTaskName) {
-      // Use custom task name if provided
-      taskName = customTaskName;
-    } else {
-      // Generate task name normally
-      taskName = await generateTaskName(contentSettings, items);
-    }
+    taskName = customTaskName || (isFusionMode ? targetTaskObj.name : await generateTaskName(contentSettings, items));
 
-    // Set vectorization state
     isVectorizing = true;
     vectorizationAbortController = new AbortController();
-
-    // Update UI state
     $('#vectors_enhanced_vectorize').hide();
     $('#vectors_enhanced_abort').show();
 
-    // 添加进度跟踪变量
-    let processedChunksCount = 0;
-    let totalItemsCount = items.length;
-
-    // Create task and collection IDs
-    taskId = generateTaskId();
     const collectionId = `${chatId}_${taskId}`;
-    let vectorsInserted = false;
+    
+    let uiBatchSize = parseInt($('#vectors_gen_batch_size').val());
+    if (isNaN(uiBatchSize) || uiBatchSize < 1) uiBatchSize = 6;
+    const GEN_BATCH_SIZE = uiBatchSize;
+    console.log(`[Pipeline] 动态批次大小: ${GEN_BATCH_SIZE}`);
 
     try {
-      const progressMessage = isIncremental ? '增量向量化开始...' : '向量化开始...';
-      toastr.info(progressMessage, '处理中');
+      const startMsg = isFusionMode ? `融合: ${taskName}` : '向量化协议启动...';
+      toastr.info(startMsg, '处理中');
 
-      // === PHASE 1: USE PRE-EXTRACTED ITEMS (Skip Re-extraction) ===
-      console.log('Pipeline: Phase 1 - Using pre-extracted items (Skip Re-extraction)');
-      console.log(`Pipeline: getVectorizableContent() already provided ${items.length} items`);
+      // PHASE 1: Grouping
+      const groups = { chat: [], file: [], world_info: [] };
+      items.forEach(item => { 
+          if (groups[item.type]) groups[item.type].push(item); 
+      });
 
-      if (globalProgressManager) {
-        globalProgressManager.show(0, items.length, '准备项目');
-      } else {
-        updateProgressNew(0, items.length, '准备项目');
-      }
+      const queue = [];
+      if (groups.chat.length) queue.push({ type: 'chat', items: groups.chat });
+      if (groups.file.length) queue.push({ type: 'file', items: groups.file });
+      if (groups.world_info.length) queue.push({ type: 'world_info', items: groups.world_info });
 
-      // Group items by type without re-extraction
-      const extractedContent = [];
+      if (globalProgressManager) globalProgressManager.show(0, items.length, '准备数据...');
+      else updateProgressNew(0, items.length, '准备数据...');
 
-      // Group chat items
-      const chatItems = items.filter(item => item.type === 'chat');
-      if (chatItems.length > 0 && contentSettings.chat?.enabled) {
-        console.log(`Pipeline: Prepared ${chatItems.length} chat items for processing`);
-        extractedContent.push({
-          type: 'chat',
-          content: chatItems, // 保持数组格式！不合并！
-          metadata: {
-            extractorType: 'PreExtracted',
-            itemCount: chatItems.length,
-            source: 'getVectorizableContent'
-          }
-        });
-      }
-
-      // Group file items
-      const fileItems = items.filter(item => item.type === 'file');
-      if (fileItems.length > 0 && contentSettings.files?.enabled) {
-        console.log(`Pipeline: Prepared ${fileItems.length} file items for processing`);
-        extractedContent.push({
-          type: 'file',
-          content: fileItems, // 保持数组格式！不合并！
-          metadata: {
-            extractorType: 'PreExtracted',
-            itemCount: fileItems.length,
-            source: 'getVectorizableContent'
-          }
-        });
-      }
-
-      // Group world info items
-      const worldInfoItems = items.filter(item => item.type === 'world_info');
-      if (worldInfoItems.length > 0 && contentSettings.world_info?.enabled) {
-        console.log(`Pipeline: Prepared ${worldInfoItems.length} world info items for processing`);
-        extractedContent.push({
-          type: 'world_info',
-          content: worldInfoItems, // 保持数组格式！不合并！
-          metadata: {
-            extractorType: 'PreExtracted',
-            itemCount: worldInfoItems.length,
-            source: 'getVectorizableContent'
-          }
-        });
-      }
-
-      if (globalProgressManager) {
-        globalProgressManager.update(items.length, items.length, '项目准备完成');
-      }
-
-      console.log(`Pipeline: Prepared ${extractedContent.length} content blocks containing ${items.length} total items`);
-      console.log('Pipeline: Content block summary:', extractedContent.map(block => ({
-        type: block.type,
-        itemCount: Array.isArray(block.content) ? block.content.length : 1,
-        isArray: Array.isArray(block.content),
-        firstItemPreview: Array.isArray(block.content) && block.content.length > 0
-          ? block.content[0].text?.substring(0, 50) + '...'
-          : 'N/A'
-      })));
-
-      // === PHASE 2: TEXT PROCESSING ===
-      console.log('Pipeline: Phase 2 - Text Processing through Pipeline');
-      if (globalProgressManager) {
-        globalProgressManager.show(0, extractedContent.length, '文本处理');
-      }
-
-      // Get pipeline components
-      const pipeline = pipelineIntegration.pipeline;
+      let processedItemsCount = 0;
       const dispatcher = pipelineIntegration.dispatcher;
-
-      // Create processing context
+      
       const processingContext = {
-        chatId,
-        taskId,
-        collectionId,
-        isIncremental,
+        chatId, taskId, collectionId, isIncremental,
         settings: contentSettings,
         abortSignal: vectorizationAbortController.signal,
         source: 'chat_vectorization',
-        taskType: taskType, // Pass taskType for summary vectorization detection
-        vectorizationSettings: {
-          source: settings.source,
-          chunk_size: settings.chunk_size,
-          overlap_percent: settings.overlap_percent,
-          force_chunk_delimiter: settings.force_chunk_delimiter
-        }
+        taskType: taskType,
+        vectorizationSettings: settings
       };
 
-      // Process each content block through the pipeline
-      for (let i = 0; i < extractedContent.length; i++) {
-        if (vectorizationAbortController.signal.aborted) {
-          throw new Error('向量化被用户中断');
-        }
+      // PHASE 2, 3, 4: STREAM LOOP
+      const currentApiDelay = parseInt($('#vectors_api_delay').val() || '0');
+      for (const group of queue) {
+          const groupItems = group.items;
+          
+          for (let i = 0; i < groupItems.length; i += GEN_BATCH_SIZE) {
+              if (vectorizationAbortController.signal.aborted) throw new Error('用户中断');
 
-        const contentBlock = extractedContent[i];
-        console.log(`Pipeline: Processing content block ${i + 1}/${extractedContent.length} (${contentBlock.type})`);
+              const batchItems = groupItems.slice(i, i + GEN_BATCH_SIZE);
+              
+              const dispatchResult = await dispatcher.dispatch(
+                  batchItems, 
+                  'vectorization',
+                  { type: group.type, collectionId, source: 'stream_extraction' },
+                  processingContext
+              );
 
-        // === PHASE 3: TASK DISPATCH ===
-        console.log('Pipeline: Phase 3 - Task Dispatch');
+              if (dispatchResult.success && dispatchResult.vectors && dispatchResult.vectors.length > 0) {
+                  const chunks = dispatchResult.vectors.map((vector, idx) => {
+                      const rawText = vector.text || vector.content;
+                      let finalIndex = vector.metadata?.originalIndex;
+                      
+                      if (finalIndex === undefined && idx < batchItems.length) {
+                           finalIndex = batchItems[idx].metadata?.originalIndex ?? batchItems[idx].metadata?.index;
+                      }
 
-        // Prepare input for dispatcher
-        const dispatchInput = {
-          content: contentBlock.content,
-          metadata: {
-            ...contentBlock.metadata,
-            type: contentBlock.type,
-            collectionId: collectionId,
-            source: 'pipeline_extraction',
-            taskType: taskType // Pass taskType to metadata for vectorization processor
-          }
-        };
+                      return {
+                          text: rawText,
+                          index: allProcessedChunksCount + idx, 
+                          metadata: { 
+                            ...vector.metadata, 
+                            type: group.type, 
+                            chunk_index: idx,
+                            originalIndex: finalIndex 
+                          }
+                      };
+                  });
 
-        console.log(`Pipeline: Dispatch input for ${contentBlock.type}:`, {
-          isArray: Array.isArray(dispatchInput.content),
-          contentLength: Array.isArray(dispatchInput.content)
-            ? dispatchInput.content.length
-            : dispatchInput.content?.length,
-          contentPreview: Array.isArray(dispatchInput.content)
-            ? dispatchInput.content.slice(0, 2).map(item => ({
-                type: item?.type,
-                hasText: !!item?.text,
-                textLength: item?.text?.length,
-                textPreview: item?.text?.substring(0, 50) + '...'
-              }))
-            : dispatchInput.content?.substring(0, 100) + '...',
-          metadata: dispatchInput.metadata
-        });
+                  // Retry Loop
+                  let attempts = 0;
+                  let saved = false;
+                  while (!saved && attempts < 3) {
+                      try {
+                          attempts++;
+                          await storageAdapter.insertVectorItems(
+                              collectionId, chunks, vectorizationAbortController.signal, 
+                              { skipDeduplication, taskId: taskId }
+                          );
+                          saved = true;
+                          vectorsInserted = true;
+                      } catch (err) {
+                          if (vectorizationAbortController.signal.aborted) throw err;
+                          await new Promise(r => setTimeout(r, 2000));
+                      }
+                  }
+                  
+                  allProcessedChunksCount += chunks.length;
+                  if (chunks.length > 0) lastSavedChunk = chunks[chunks.length - 1];
 
-        // Dispatch through the text dispatcher
-        // Pass content and metadata separately - the dispatcher expects content as first param
-        const dispatchResult = await dispatcher.dispatch(
-          dispatchInput.content,
-          'vectorization',
-          dispatchInput.metadata,  // This becomes the config parameter in dispatcher
-          processingContext
-        );
+                  batchItems.forEach(item => {
+                      if (item.type === 'chat') processedItemsSummary.chat.push(item.metadata.index);
+                      else if (item.metadata.fileName) {
+                          if (!processedItemsSummary.files.includes(item.metadata.fileName)) {
+                              processedItemsSummary.files.push(item.metadata.fileName);
+                          }
+                      }
+                  });
+              }
 
-        console.log(`Pipeline: Dispatch result for ${contentBlock.type}:`, {
-          success: dispatchResult.success,
-          vectorized: dispatchResult.vectorized,
-          processingTime: dispatchResult._pipeline?.processingTime
-        });
-
-        // Convert pipeline result to chunks format
-        if (dispatchResult.success && dispatchResult.vectors) {
-          const chunks = dispatchResult.vectors.map((vector, idx) => {
-            const rawText = vector.text || vector.content;
-
-            let originalIndex;
-
-            // Special handling for file type - extract originalIndex from the content
-            if (contentBlock.type === 'file' && rawText.includes('originalIndex=')) {
-              // Extract originalIndex from file META tag
-              const match = rawText.match(/originalIndex=(\d+)/);
-              if (match) {
-                originalIndex = parseInt(match[1], 10);
+              processedItemsCount += batchItems.length;
+              
+              const progressMsg = `已存 ${allProcessedChunksCount} 块 (API冷却: ${currentApiDelay}ms)`;
+              
+              if (globalProgressManager) {
+                  globalProgressManager.update(processedItemsCount, items.length, progressMsg);
               } else {
-                // Fallback if parsing fails
-                originalIndex = idx;
+                  updateProgressNew(processedItemsCount, items.length, progressMsg);
               }
-            } else {
-              // For other types (chat, world_info), use metadata
-              originalIndex = vector.metadata?.originalIndex ??
-                            contentBlock.metadata?.originalIndex ??
-                            contentBlock.metadata?.index ??
-                            idx;
-            }
 
-            const metadataPrefix = `[META:type=${contentBlock.type},originalIndex=${originalIndex}]`;
-            const encodedText = `${metadataPrefix}${rawText}`;
-
-            return {
-              hash: getHashValue(encodedText),
-              text: encodedText,
-              index: allProcessedChunks.length + idx,
-              metadata: {
-                ...vector.metadata,
-                ...contentBlock.metadata,
-                type: contentBlock.type,
-                chunk_index: idx,
-                chunk_total: dispatchResult.vectors.length,
-                pipeline_processed: true
+              if (currentApiDelay > 0) {
+                  await new Promise(r => setTimeout(r, currentApiDelay));
               }
-            };
-          });
-
-          allProcessedChunks.push(...chunks);
-        }
-
-        if (globalProgressManager) {
-          globalProgressManager.update(i + 1, extractedContent.length, `处理 ${contentBlock.type} 完成`);
-        }
-      }
-
-      console.log(`Pipeline: Processing complete. Generated ${allProcessedChunks.length} chunks through full pipeline`);
-      console.log('Pipeline: allProcessedChunks details:', allProcessedChunks.map(chunk => ({
-        hasText: !!chunk.text,
-        textLength: chunk.text?.length,
-        textPreview: chunk.text?.substring(0, 50) + '...',
-        hasMetadata: !!chunk.metadata,
-        metadata: chunk.metadata
-      })));
-
-      // === PHASE 4: VECTOR STORAGE ===
-      console.log('Pipeline: Phase 4 - Vector Storage');
-      if (globalProgressManager) {
-        globalProgressManager.show(0, allProcessedChunks.length, '向量存储');
-      }
-
-      // Store vectors using existing storage adapter
-      const batchSize = 50;
-      for (let i = 0; i < allProcessedChunks.length; i += batchSize) {
-        if (vectorizationAbortController.signal.aborted) {
-          throw new Error('向量化被用户中断');
-        }
-
-        const batch = allProcessedChunks.slice(i, Math.min(i + batchSize, allProcessedChunks.length));
-        await storageAdapter.insertVectorItems(collectionId, batch, vectorizationAbortController.signal, { skipDeduplication });
-        vectorsInserted = true;
-        // 更新已处理的块数
-        processedChunksCount = Math.min(i + batch.length, allProcessedChunks.length);
-
-        // 追踪最后成功保存的 chunk
-        if (batch.length > 0) {
-          lastSavedChunk = batch[batch.length - 1];
-        }
-
-        if (globalProgressManager) {
-          globalProgressManager.update(Math.min(i + batchSize, allProcessedChunks.length), allProcessedChunks.length, '向量存储中...');
-        }
-      }
-
-      // Create corrected settings (reuse existing logic)
-      const correctedSettings = JSON.parse(JSON.stringify(contentSettings));
-
-      // ... (copy the settings correction logic from original function)
-      if (correctedSettings.chat.enabled) {
-        const chatItems = items.filter(item => item.type === 'chat');
-        if (chatItems.length > 0) {
-          const indices = chatItems.map(item => item.metadata.index);
-          correctedSettings.chat.range.start = Math.min(...indices);
-          correctedSettings.chat.range.end = Math.max(...indices);
-        } else {
-          correctedSettings.chat.enabled = false;
-        }
-      }
-
-      if (correctedSettings.files.enabled) {
-        const actuallyProcessedFiles = items
-          .filter(item => item.type === 'file')
-          .map(item => item.metadata.url);
-        correctedSettings.files.selected = actuallyProcessedFiles;
-      }
-
-      if (correctedSettings.world_info.enabled) {
-        const actuallyProcessedEntries = items
-          .filter(item => item.type === 'world_info')
-          .map(item => item.metadata.uid);
-        const newWorldInfoSelected = {};
-        for (const uid of actuallyProcessedEntries) {
-          const originalWorld = Object.keys(contentSettings.world_info.selected).find(world =>
-            contentSettings.world_info.selected[world].includes(uid)
-          );
-          if (originalWorld) {
-            if (!newWorldInfoSelected[originalWorld]) {
-              newWorldInfoSelected[originalWorld] = [];
-            }
-            newWorldInfoSelected[originalWorld].push(uid);
           }
-        }
-        correctedSettings.world_info.selected = newWorldInfoSelected;
       }
 
-      // Extract actually processed items by type
-      const actualProcessedItems = {
-        chat: items.filter(item => item.type === 'chat').map(item => item.metadata.index),
-        files: items.filter(item => item.type === 'file').map(item => item.metadata.url),
-        world_info: items.filter(item => item.type === 'world_info').map(item => ({
-          uid: item.metadata.uid,
-          world: item.metadata.world,
-          comment: item.metadata.comment || '(无注释)'
-        }))
-      };
-
-      // Create task object
-      const task = {
-        taskId: taskId,
-        name: taskName,
-        timestamp: Date.now(),
-        settings: correctedSettings,
-        enabled: true,
-        itemCount: allProcessedChunks.length,
-        originalItemCount: items.length,
-        isIncremental: isIncremental,
-        actualProcessedItems: actualProcessedItems,
-        version: '2.0' // Mark as pipeline version
-      };
-
-      // 不再保存 textContent 到任务中
-      // 所有文本内容都从向量数据库获取
-      console.debug(`Vectors: Task created with ${allProcessedChunks.length} chunks. Text stored in vector database only.`);
-
-      // Add task to list
-      addVectorTask(chatId, task);
-
-      // Update cache (只缓存哈希值，不缓存文本)
-      cachedVectors.set(collectionId, {
-        timestamp: Date.now(),
-        hashes: allProcessedChunks.map(chunk => chunk.hash),
-        itemCount: allProcessedChunks.length,
-        settings: JSON.parse(JSON.stringify(settings)),
-      });
-
-      // Complete progress
-      if (globalProgressManager) {
-        globalProgressManager.complete('向量化完成');
+      // PHASE 5: COMPLETION
+      if (isFusionMode) {
+          const mergedTask = FusionManager.mergeTaskMetadata(targetTaskObj, { itemCount: allProcessedChunksCount }, items);
+          const tasks = getChatTasks(chatId);
+          const idx = tasks.findIndex(t => t.taskId === taskId);
+          if (idx !== -1) {
+              tasks[idx] = mergedTask;
+              settings.vector_tasks[chatId] = tasks;
+          }
       } else {
-        hideProgressNew();
+          const task = {
+            taskId, name: taskName, timestamp: Date.now(), 
+            settings: { ...getCleanSettings(contentSettings), ...getCleanSettings(settings) }, 
+            enabled: true, itemCount: allProcessedChunksCount, originalItemCount: items.length,
+            isIncremental, actualProcessedItems: processedItemsSummary, version: '2.0',
+            metadata: { processed_files: processedItemsSummary.files, processed_chat_ranges: {} }
+          };
+          addVectorTask(chatId, task);
       }
 
-      const successMessage = isIncremental ?
-        `成功创建增量向量化任务 "${taskName}"：${items.length} 个新项目，${allProcessedChunks.length} 个块` :
-        `成功创建向量化任务 "${taskName}"：${items.length} 个项目，${allProcessedChunks.length} 个块`;
-      toastr.success(successMessage, '向量化完成');
+      if (!extension_settings.vectors_enhanced.vector_tasks) extension_settings.vectors_enhanced.vector_tasks = {};
+      extension_settings.vectors_enhanced.vector_tasks[chatId] = settings.vector_tasks[chatId];
+      saveSettingsDebounced();
 
-      // Refresh task list UI
+      if (cachedVectors.has(collectionId)) cachedVectors.delete(collectionId);
+      
+      if (globalProgressManager) globalProgressManager.complete('完成');
+      else hideProgressNew();
+
+      toastr.success(`完成: ${allProcessedChunksCount} 记忆块`, 'ArcFess');
       await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
 
-      return {
-        success: true,
-        taskId,
-        collectionId,
-        itemCount: allProcessedChunks.length,
-        originalItemCount: items.length,
-        pipelineProcessed: true
-      };
+      return { success: true };
 
     } catch (error) {
-      console.error('Pipeline vectorization failed:', error);
-
-      // Use ProgressManager
-      if (globalProgressManager) {
-        globalProgressManager.error('向量化失败');
-      } else {
-        hideProgressNew();
-      }
+      console.error('Vectorization failed:', error);
+      
+      if (globalProgressManager) globalProgressManager.error('停止');
+      else hideProgressNew();
 
       const isAbort = error.name === 'AbortError' || error.message.includes('用户中断');
 
       if (vectorsInserted) {
-        // Common logic for when some chunks have been inserted
-        let lastChunkInfo = '';
-        if (lastSavedChunk && lastSavedChunk.text) {
-            const decoded = decodeMetadataFromText(lastSavedChunk.text);
-            if (decoded.metadata) {
-                const meta = decoded.metadata;
-                let infoText = '';
-                if (meta.type === 'chat') infoText = `聊天消息 #${meta.originalIndex || '未知'}`;
-                else if (meta.type === 'file') infoText = `文件块 (索引: ${meta.originalIndex || '未知'})`;
-                else if (meta.type === 'world_info') infoText = `世界信息: ${meta.entry || `块 (索引: ${meta.originalIndex || '未知'})`}`;
-                else infoText = `${meta.type || '未知类型'} (索引: ${meta.originalIndex || '未知'})`;
-                const textPreview = lastSavedChunk.text ? lastSavedChunk.text.substring(0, 120) + (lastSavedChunk.text.length > 120 ? '...' : '') : '(无内容)';
-                lastChunkInfo = `<div style="margin-top: 15px; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 4px;"><p style="margin: 0 0 5px 0;"><strong>最后保存的块：</strong></p><p style="margin: 0 0 3px 0; font-size: 0.9em;">类型：${infoText}</p><p style="margin: 0; font-size: 0.9em; color: var(--SmartThemeQuoteColor);">内容预览：${textPreview}</p></div>`;
-            }
+        const title = isAbort ? '向量化已暂停' : '发生错误';
+        
+        if (isFusionMode && isAbort) {
+             const tasks = getChatTasks(chatId);
+             const tIdx = tasks.findIndex(t => t.taskId === taskId);
+             if (tIdx !== -1) {
+                 tasks[tIdx].isPartial = true;
+                 tasks[tIdx].itemCount = allProcessedChunksCount; 
+                 settings.vector_tasks[chatId] = tasks;
+                 extension_settings.vectors_enhanced.vector_tasks[chatId] = tasks;
+                 saveSettingsDebounced();
+             }
+             toastr.warning(`进度已保存 (${allProcessedChunksCount} 块)`, "暂停");
+             return { success: false, partial: true };
         }
 
-        const title = isAbort ? '向量化已中断' : '向量化过程中发生错误';
-        const errorDetails = isAbort ? '' : `<p style="font-size: 0.9em; color: var(--SmartThemeQuoteColor); word-break: break-all; margin-top: 10px;">错误: ${error.message}</p>`;
-
         const confirm = await callGenericPopup(
-            `<div><p><strong>${title}</strong></p>${errorDetails}<div style="text-align: left; margin: 15px 0;"><p>处理进度：</p><ul style="margin: 5px 0 15px 20px;"><li>已处理块数：${processedChunksCount} / ${allProcessedChunks.length}</li><li>原始项目数：${totalItemsCount}</li><li>完成度：${Math.round((processedChunksCount / allProcessedChunks.length) * 100)}%</li></ul></div>${lastChunkInfo}<p style="margin-top: 15px;">是否保存已处理的内容？</p><p style="font-size: 0.9em; color: var(--SmartThemeQuoteColor);">选择"是"将保留已处理的数据并创建部分完成的任务。<br>选择"否"将清理所有已处理的数据。</p></div>`,
-            POPUP_TYPE.CONFIRM,
-            { okButton: '是，保存', cancelButton: '否，清理' }
+            `<div><strong>${title}</strong><p>已成功写入 ${allProcessedChunksCount} 个向量块。</p><p>是否保存当前进度？</p></div>`,
+            POPUP_TYPE.CONFIRM, { okButton: '保存', cancelButton: '丢弃' }
         );
 
         if (confirm === POPUP_RESULT.AFFIRMATIVE) {
-            const processedChunks = allProcessedChunks.slice(0, processedChunksCount);
-            const task = {
-                taskId: taskId,
-                name: taskName + ' (部分完成)',
-                timestamp: Date.now(),
-                settings: correctedSettings,
-                enabled: true,
-                itemCount: processedChunks.length,
-                originalItemCount: items.length,
-                isIncremental: isIncremental,
-                isPartial: true,
-                completionRate: Math.round((processedChunksCount / allProcessedChunks.length) * 100),
-                actualProcessedItems: actualProcessedItems,
-                version: '2.0'
+            const partialTask = {
+                taskId, name: taskName + " (Partial)", timestamp: Date.now(), 
+                settings: { ...getCleanSettings(contentSettings), ...getCleanSettings(settings) }, 
+                enabled: true, itemCount: allProcessedChunksCount, originalItemCount: items.length,
+                isIncremental, isPartial: true, version: '2.0',
+                actualProcessedItems: processedItemsSummary,
+                metadata: { processed_files: processedItemsSummary.files, processed_chat_ranges: {} }
             };
-            addVectorTask(chatId, task);
-            cachedVectors.set(collectionId, {
-                timestamp: Date.now(),
-                hashes: processedChunks.map(chunk => chunk.hash),
-                itemCount: processedChunks.length,
-                settings: JSON.parse(JSON.stringify(settings)),
-                isPartial: true
-            });
-            toastr.info(`向量化失败，但已保存 ${processedChunksCount} 个块的数据`, '部分保存');
+
+            if (!settings.vector_tasks[chatId]) settings.vector_tasks[chatId] = [];
+            settings.vector_tasks[chatId].push(partialTask);
+            extension_settings.vectors_enhanced.vector_tasks[chatId] = settings.vector_tasks[chatId];
+            
+            saveSettingsDebounced();
             await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
-            return { success: false, aborted: isAbort, partial: true, savedCount: processedChunksCount, error: `操作失败（已保存部分数据）: ${error.message}` };
+            toastr.info('进度已保存', '保存成功');
         } else {
-            await storageAdapter.purgeVectorIndex(collectionId);
-            toastr.info(`${title}，已清理部分数据`, isAbort ? '中断' : '错误');
-            return { success: false, aborted: isAbort, error: isAbort ? '用户中断操作' : error.message };
+            await storageAdapter.deleteTask(taskId);
+            toastr.info('数据已清理', '已丢弃');
         }
+
       } else {
-        // Logic for when no chunks have been inserted
-        if (isAbort) {
-            toastr.info('向量化已中断', '中断');
-            return { success: false, aborted: true, error: '用户中断操作' };
-        } else {
-            toastr.error(`向量化失败: ${error.message}`, '错误');
-            throw error; // Re-throw only for non-abort errors that happened early
-        }
+         if (!isAbort) toastr.error(error.message, '错误');
       }
+      return { success: false, aborted: isAbort };
 
     } finally {
-      // Reset state
       isVectorizing = false;
       vectorizationAbortController = null;
       $('#vectors_enhanced_vectorize').show();
       $('#vectors_enhanced_abort').hide();
-
-      // 清除文件选择状态，避免中断后再次向量化时使用旧的文件选择
-      if (settings.selected_content.files && settings.selected_content.files.selected) {
-        console.log('Vectors: Clearing file selection after vectorization completion/abort');
-        settings.selected_content.files.selected = [];
-        Object.assign(extension_settings.vectors_enhanced, settings);
-        saveSettingsDebounced();
-
-        // 立即更新UI以反映清理后的状态
-        if (typeof updateFileList === 'function') {
-          await updateFileList();
-        }
-      }
     }
-
-  } catch (error) {
-    console.error('Pipeline vectorization main flow error:', error);
-    toastr.error('向量化处理中发生严重错误，请检查控制台。');
-
-    // Ensure UI state reset
-    isVectorizing = false;
-    vectorizationAbortController = null;
-    $('#vectors_enhanced_vectorize').show();
-    $('#vectors_enhanced_abort').hide();
-
-    // 清除文件选择状态，避免中断后再次向量化时使用旧的文件选择
-    if (settings.selected_content.files && settings.selected_content.files.selected) {
-      console.log('Vectors: Clearing file selection after vectorization error');
-      settings.selected_content.files.selected = [];
-      Object.assign(extension_settings.vectors_enhanced, settings);
-      saveSettingsDebounced();
-
-      // 立即更新UI以反映清理后的状态
-      if (typeof updateFileList === 'function') {
-        await updateFileList();
-      }
-    }
-
-    if (globalProgressManager) {
-      globalProgressManager.error('严重错误');
-    } else {
-      hideProgressNew();
-    }
-
-    return {
-      success: false,
-      error: error.message
-    };
+  } catch (e) {
+      console.error("Fatal:", e);
+      toastr.error(e.message);
   }
 }
 
@@ -1776,8 +1745,7 @@ async function cleanupInvalidSelections() {
     console.debug('Vectors: Valid world info UIDs:', Array.from(allValidUids));
     console.debug('Vectors: Current valid worlds:', Array.from(currentValidWorlds));
 
-    const originalSelected = JSON.parse(JSON.stringify(settings.selected_content.world_info.selected));
-    const originalCount = Object.values(originalSelected).flat().length;
+    const originalCount = Object.values(settings.selected_content.world_info.selected).flat().length;
 
     // Clean each world's selection
     for (const [world, selectedUids] of Object.entries(settings.selected_content.world_info.selected)) {
@@ -2234,7 +2202,7 @@ async function vectorizeContent() {
 
     // 6. Perform vectorization with the final, clean set of items
     console.log('Vectors: Using pipeline implementation for vectorization');
-    await performVectorization(JSON.parse(JSON.stringify(settings.selected_content)), chatId, isIncremental, itemsToProcess);
+    await performVectorization(structuredClone(settings.selected_content), chatId, isIncremental, itemsToProcess);
 }
 
 /**
@@ -2320,6 +2288,7 @@ async function exportVectors() {
  * @type {Map<string, number>}
  */
 const hashCache = new Map();
+const HASH_CACHE_MAX_SIZE = 500;
 
 /**
  * Gets the hash value for a given string
@@ -2329,6 +2298,11 @@ const hashCache = new Map();
 function getHashValue(str) {
   if (hashCache.has(str)) {
     return hashCache.get(str);
+  }
+  // 容量限制：超500条时删掉最旧的（FIFO）
+  if (hashCache.size >= HASH_CACHE_MAX_SIZE) {
+    const firstKey = hashCache.keys().next().value;
+    hashCache.delete(firstKey);
   }
   const hash = getStringHash(str);
   hashCache.set(str, hash);
@@ -2399,555 +2373,827 @@ async function synchronizeChat(batchSize = 5) {
 }
 
 /**
- * Retrieves vectorized content for injection
- * @param {object[]} chat Chat messages
- * @param {number} contextSize Context size
- * @param {function} abort Abort function
- * @param {string} type Generation type
+ * Retrieves vectorized content for injection (Dual-Track Version with Thought Engine)
  */
 async function rearrangeChat(chat, contextSize, abort, type) {
-  // 开始计时 - 记录查询开始时间
-  const queryStartTime = performance.now();
+  const now = Date.now();
 
-  // 辅助函数：记录耗时并返回
+  // 1. 拦截逻辑：正在检索或处于冷却期（预览模式除外）则直接跳过
+  if (isQuerying) {
+      console.log('[Vectors] 拦截：上一个检索任务尚未完成');
+      return;
+  }
+  if (type !== 'preview' && (now - lastQueryTimestamp < QUERY_COOLDOWN)) {
+      console.log('[Vectors] 拦截：触发频率过高，进入冷却');
+      return;
+  }
+
+  // 2. 加锁并记录时间
+  isQuerying = true;
+  lastQueryTimestamp = now;
+
+  const queryStartTime = performance.now();
   const logTimingAndReturn = (reason = '', isError = false) => {
     const queryEndTime = performance.now();
-    const totalDuration = queryEndTime - queryStartTime;
-    if (reason) {
-      const status = isError ? '失败' : '跳过';
-      console.log(`🔍 Vectors Enhanced: 查询${status} (${reason}) - 耗时: ${totalDuration.toFixed(2)}ms`);
-    }
+    console.log(`[Vectors] 查询${isError ? '失败' : '跳过'} (${reason}) - 耗时: ${(queryEndTime - queryStartTime).toFixed(2)}ms`);
   };
 
   try {
-    if (type === 'quiet') {
-      console.debug('Vectors: Skipping quiet prompt');
-      // quiet 模式不需要计时
-      return;
-    }
+    if (type === 'quiet') return;
 
-    setExtensionPrompt(
-      EXTENSION_PROMPT_TAG,
-      '',
-      settings.position,
-      settings.depth,
-      settings.include_wi,
-      settings.depth_role,
-    );
+    setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.depth_role);
+    lastInjectedContent = null;
+    lastInjectedStats = null;
+    lastQueryDetails = null;
 
-    // 检查主开关是否启用
-    if (!settings.master_enabled) {
-      console.debug('Vectors: Master switch disabled, skipping all functionality');
-      logTimingAndReturn('主开关已禁用');
-      return;
-    }
-
-    // 检查是否启用向量查询
-    if (!settings.enabled) {
-      console.debug('Vectors: Query disabled by user');
-      logTimingAndReturn('向量查询已禁用');
+    if (!settings.master_enabled || !settings.enabled) {
+      logTimingAndReturn('功能已禁用');
       return;
     }
 
     const chatId = getCurrentChatId();
-    if (!chatId || chatId === 'null' || chatId === 'undefined') {
-      console.debug('Vectors: No chat ID available');
-      logTimingAndReturn('无聊天ID');
-      return;
-    }
+    if (!chatId) return;
 
-    // Query vectors based on recent messages
     const queryMessages = Math.min(settings.query_messages || 3, chat.length);
-    let queryText = chat
-      .slice(-queryMessages)
-      .map(x => x.mes)
-      .join('\n');
+    let queryText = chat.slice(-queryMessages).map(x => getTextWithoutAttachments(x)).join('\n');
     if (!queryText.trim()) {
       logTimingAndReturn('查询文本为空');
       return;
     }
 
-    // 实验性功能：添加查询指令
+    // 1. 强力净水：剔除所有系统消息、隐藏状态栏和空消息，只保留真实的对话
+    const validChat = chat.filter(x => !x.is_system && !x.is_group_greeting && x.mes);
+    
+    // 2. v7.1: 理性分支取最近 N 条消息（由上下文长度设置控制）
+    const ctxSize = settings.thought_engine_context_size || 3;
+    const thoughtContextMessages = validChat.slice(-ctxSize);
+    let thoughtContextText = thoughtContextMessages.map(x => {
+        const speaker = x.is_user ? 'Jc_ker' : (x.name || 'Char');
+        // 剥离附件内容 + 清洗残留的 HTML 标签
+        let cleanMes = getTextWithoutAttachments(x).replace(/<[^>]*>/g, '').trim(); 
+        return `${speaker}: ${cleanMes}`;
+    }).join('\n');
+
     if (settings.query_instruction_enabled && settings.query_instruction_template) {
       queryText = `Instruct: ${settings.query_instruction_template}\nQuery:${queryText}`;
-      console.debug('Vectors: Using instruction-enhanced query');
     }
 
-    // Get all enabled tasks for this chat
     const allTasks = getChatTasks(chatId);
-    const tasks = allTasks.filter(t => t.enabled);
-
-    console.debug(`Vectors: Chat ${chatId} has ${allTasks.length} total tasks, ${tasks.length} enabled`);
-    allTasks.forEach(task => {
-      console.debug(`Vectors: Task "${task.name}" (${task.taskId}) - enabled: ${task.enabled}`);
+    const tasks = allTasks.filter(t => {
+      if (t.isRealtime) return settings.realtime_retrieval_enabled !== false;
+      return t.enabled;
     });
-
     if (tasks.length === 0) {
-      console.debug('Vectors: No enabled tasks for this chat');
-      logTimingAndReturn('无启用的任务');
+      logTimingAndReturn('无启用任务');
       return;
     }
 
-    // Query all enabled tasks
-    let allResults = [];
-    // 为了确保能从所有任务中获得最相关的结果，每个任务查询稍多一些
-    const perTaskLimit = Math.max(Math.ceil((settings.max_results || 10) * 1.5), 20);
+    const FETCH_LIMIT = settings.max_results || 10;
 
-    for (const task of tasks) {
-      // 支持外挂任务：如果任务有 type 和 source 字段，使用源集合ID
-      let collectionId;
-      if (task.type === 'external' && task.source) {
-        collectionId = task.source;
-        console.debug(`Vectors: Querying external task "${task.name}" using source collection "${collectionId}"`);
-      } else {
-        collectionId = `${chatId}_${task.taskId}`;
-        console.debug(`Vectors: Querying collection "${collectionId}" for task "${task.name}"`);
-      }
+    // 辅助引擎 1：本地 FAISS 检索发射器（并行查询多个 collection）
+    const fetchFaiss = async (searchText, tag) => {
+      const taskQueries = tasks.map(async (task) => {
+        let collectionId = (task.type === 'external' && task.source) ? task.source : `${chatId}_${task.taskId}`;
+        if (task.isRealtime) collectionId = task.taskId; // Fix: 实时库的 taskId 本身就是 collectionId (例如 rt_chatId)
 
-      try {
-        const results = await storageAdapter.queryCollection(collectionId, queryText, perTaskLimit, settings.score_threshold);
-        console.debug(`Vectors: Query results for task ${task.name}:`, results);
-        console.debug(`Vectors: Result structure - has items: ${!!results?.items}, has hashes: ${!!results?.hashes}, has distances: ${!!results?.distances}, has similarities: ${!!results?.similarities}`);
-
-        // 根据API返回的结构处理结果
-        if (results) {
-          // 优先使用 metadata 中的文本（向量数据库应该包含）
-          if (results.metadata && Array.isArray(results.metadata)) {
-            console.debug(`Vectors: Using text from metadata for ${collectionId}`);
-            // 添加调试日志查看metadata结构
-            if (results.metadata.length > 0) {
-              console.debug(`Vectors: First metadata item structure:`, {
-                hasText: !!results.metadata[0].text,
-                hasType: !!results.metadata[0].type,
-                hasScore: !!results.metadata[0].score,
-                keys: Object.keys(results.metadata[0])
-              });
-              // 打印完整的第一个结果以查看分数在哪里
-              console.debug(`Vectors: First result full data:`, results.metadata[0]);
-              if (results.distances) {
-                console.debug(`Vectors: Distances array:`, results.distances.slice(0, 3));
-              }
-              if (results.similarities) {
-                console.debug(`Vectors: Similarities array:`, results.similarities.slice(0, 3));
-              }
-            }
-            results.metadata.forEach((meta, index) => {
-              if (meta.text) {
-                // 尝试从多个可能的位置获取分数
-                let score = 0;
-                if (meta.score !== undefined) {
-                  score = meta.score;
-                } else if (results.distances && results.distances[index] !== undefined) {
-                  // 距离越小越相似，转换为相似度分数
-                  score = 1 / (1 + results.distances[index]);
-                } else if (results.similarities && results.similarities[index] !== undefined) {
-                  score = results.similarities[index];
-                }
-
-                allResults.push({
-                  text: meta.text,
-                  score: score,
-                  metadata: {
-                    ...meta,
-                    taskName: task.name,
-                    taskId: task.taskId,
-                    // Include decoded metadata if available
-                    type: meta.decodedType || meta.type,
-                    originalIndex: meta.decodedOriginalIndex !== undefined ? meta.decodedOriginalIndex : meta.originalIndex
-                  },
-                });
-              } else {
-                console.warn(`Vectors: Missing text in metadata for item ${index} in ${collectionId}`);
+        try {
+          const res = await storageAdapter.queryCollection(collectionId, searchText, FETCH_LIMIT);
+          if (!res || (!res.metadata && !res.items)) return [];
+          const items = res.metadata || res.items || [];
+          const distances = res.distances || [];
+          const similarities = res.similarities || [];
+          const strategy = task.isRealtime ? {
+            quota: settings.realtime_quota || 0,
+            boost: settings.realtime_boost !== undefined ? settings.realtime_boost : 1.0
+          } : (task.retrievalSettings || { quota: 0, boost: 1.0 });
+          return items.reduce((acc, item, idx) => {
+            if (!item.text) return acc;
+            const rawScore = item.score !== undefined ? item.score : (similarities[idx] !== undefined ? similarities[idx] : 1 / (1 + distances[idx]));
+            const finalScore = rawScore * strategy.boost; // 乘以倍率
+            acc.push({
+              text: item.text,
+              score: finalScore,
+              rawScore: rawScore,
+              sourceTag: tag,
+              metadata: {
+                ...item,
+                taskName: task.name,
+                taskId: task.taskId,
+                strategy: strategy,
+                originalIndex: item.decodedOriginalIndex !== undefined ? item.decodedOriginalIndex : (item.originalIndex ?? 0),
+                type: item.decodedType || item.type || 'unknown'
               }
             });
-          }
-          // 兼容旧版本：如果API返回了items数组（包含text）
-          else if (results.items && Array.isArray(results.items)) {
-            console.debug(`Vectors: Using items format for ${collectionId}`);
-            results.items.forEach((item, index) => {
-              if (item.text) {
-                // 尝试从多个可能的位置获取分数
-                let score = 0;
-                if (item.score !== undefined) {
-                  score = item.score;
-                } else if (results.distances && results.distances[index] !== undefined) {
-                  // 距离越小越相似，转换为相似度分数
-                  score = 1 / (1 + results.distances[index]);
-                } else if (results.similarities && results.similarities[index] !== undefined) {
-                  score = results.similarities[index];
-                }
-
-                allResults.push({
-                  text: item.text,
-                  score: score,
-                  metadata: {
-                    ...item.metadata,
-                    taskName: task.name,
-                    taskId: task.taskId,
-                    // Include decoded metadata if available
-                    type: item.metadata?.decodedType || item.metadata?.type,
-                    originalIndex: item.metadata?.decodedOriginalIndex !== undefined ? item.metadata?.decodedOriginalIndex : item.metadata?.originalIndex
-                  },
-                });
-              }
-            });
-          }
-          // 向后兼容：只有在上述方法都失败时，才尝试从任务中获取
-          else if (results.hashes && task.textContent && Array.isArray(task.textContent)) {
-            console.debug(`Vectors: Fallback to task textContent for ${collectionId} (legacy support)`);
-            results.hashes.forEach((hash, index) => {
-              const textItem = task.textContent.find(item => item.hash === hash);
-              if (textItem && textItem.text) {
-                allResults.push({
-                  text: textItem.text,
-                  score: results.metadata?.[index]?.score || 0,
-                  metadata: {
-                    ...textItem.metadata,
-                    ...(results.metadata?.[index] || {}),
-                    taskName: task.name,
-                    taskId: task.taskId,
-                  },
-                });
-              }
-            });
-          }
-          // 如果所有方法都失败了，记录错误
-          else {
-            console.error(`Vectors: Unable to retrieve text content for ${collectionId}. Results structure:`, {
-              hasMetadata: !!results.metadata,
-              hasItems: !!results.items,
-              hasHashes: !!results.hashes,
-              hasTextContent: !!task.textContent
-            });
-          }
+            return acc;
+          }, []);
+        } catch (err) {
+          console.error(`[Vectors] Task query failed [${task.name}]:`, err);
+          return [];
         }
-      } catch (error) {
-        console.error(`Vectors: Failed to query task ${task.name}:`, error);
-      }
-    }
-
-    // 保存原始查询结果数量（用于通知显示）
-    const originalQueryCount = allResults.length;
-
-    // 保存重排前的结果（深拷贝）
-    const resultsBeforeRerank = allResults.map(r => ({
-        text: r.text,
-        score: r.score,
-        metadata: { ...r.metadata }
-    }));
-
-    // 在 rerank 之前不要限制结果数量，让 rerank 有更多候选项
-    // Use RerankService if available
-    let rerankApplied = false;
-    if (rerankService && rerankService.isEnabled() && allResults.length > 0) {
-        allResults = await rerankService.rerankResults(queryText, allResults);
-        rerankApplied = true;
-    } else {
-        // If reranking is not enabled, sort by original score
-        allResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-    }
-
-    // 限制结果数量
-    if (rerankService && rerankService.isEnabled()) {
-      allResults = rerankService.limitResults(allResults, settings.max_results || 10);
-    } else {
-      // 如果没有启用 rerank，使用 max_results
-      const finalLimit = settings.max_results || 10;
-      if (allResults.length > finalLimit) {
-        console.debug(`Vectors: Limiting final results from ${allResults.length} to ${finalLimit}`);
-        allResults = allResults.slice(0, finalLimit);
-      }
-    }
-
-    // 初始化变量
-    let topResults = [];
-    let groupedResults = {};
-    let insertedText = '';
-    let totalChars = 0;
-
-    if (allResults.length === 0) {
-      console.debug('Vectors: No query results found');
-    } else {
-      console.debug(`Vectors: Found ${allResults.length} total results after limiting`);
-
-      // 使用所有限制后的结果
-      topResults = allResults;
-
-      console.debug(`Vectors: Using top ${topResults.length} results`);
-
-      // Group results by type
-      topResults.forEach(result => {
-        const type = result.metadata?.type || 'unknown';
-        if (!groupedResults[type]) {
-          groupedResults[type] = [];
-        }
-        groupedResults[type].push(result);
       });
+      const allResults = await Promise.all(taskQueries);
+      return allResults.flat();
+    };
 
-      console.debug(
-        'Vectors: Grouped results by type:',
-        Object.keys(groupedResults).map(k => `${k}: ${groupedResults[k].length}`),
-      );
-
-      // Sort each group by taskId first, then by originalIndex within same task
-      Object.keys(groupedResults).forEach(type => {
-        groupedResults[type].sort((a, b) => {
-          // First, sort by taskId to keep same task content together
-          const aTaskId = a.metadata?.taskId || '';
-          const bTaskId = b.metadata?.taskId || '';
-
-          if (aTaskId !== bTaskId) {
-            // Different tasks - sort by taskId to keep them separate
-            return aTaskId.localeCompare(bTaskId);
-          }
-
-          // Same task - now sort by originalIndex within the task
-          // First try to decode originalIndex from text
-          const aDecoded = decodeMetadataFromText(a.text);
-          const bDecoded = decodeMetadataFromText(b.text);
-
-          // Get originalIndex from decoded metadata or fallback to metadata.index
-          const aIndex = aDecoded.metadata.originalIndex ?? a.metadata?.originalIndex ?? a.metadata?.index ?? 0;
-          const bIndex = bDecoded.metadata.originalIndex ?? b.metadata?.originalIndex ?? b.metadata?.index ?? 0;
-
-          // 对于世界书类型的特殊处理
-          if (type === 'world_info') {
-            // 提取条目标识符和分块信息
-            const aEntry = aDecoded.metadata.entry || '';
-            const bEntry = bDecoded.metadata.entry || '';
-
-            // 提取分块编号 (从 "chunk=1/3" 格式中提取)
-            const aChunkMatch = a.text.match(/chunk=(\d+)\/\d+/);
-            const bChunkMatch = b.text.match(/chunk=(\d+)\/\d+/);
-            const aChunkNum = aChunkMatch ? parseInt(aChunkMatch[1]) : 0;
-            const bChunkNum = bChunkMatch ? parseInt(bChunkMatch[1]) : 0;
-
-            // 如果是同一个条目的不同分块
-            if (aEntry === bEntry && aEntry !== '') {
-              // 同一条目内按chunk编号升序
-              return aChunkNum - bChunkNum;
-            } else {
-              // 不同条目之间按originalIndex降序
-              return bIndex - aIndex;
-            }
-          } else {
-            // 其他类型保持升序
-            return aIndex - bIndex;
-          }
+    // 辅助引擎 2：BM25 关键词检索发射器
+    const fetchBM25 = async (searchText) => {
+      if (!settings.bm25_enabled) return [];
+      try {
+        const collectionIds = tasks.map(t => {
+          if (t.isRealtime) return t.taskId;
+          return (t.type === 'external' && t.source) ? t.source : `${chatId}_${t.taskId}`;
+        });
+        const res = await storageAdapter.hybridQuery(searchText, FETCH_LIMIT, collectionIds, {
+          k1: settings.bm25_k1 ?? 1.2,
+          b: settings.bm25_b ?? 0.75,
+          min_score: settings.bm25_min_score ?? 0.01
         });
 
-        console.debug(`Vectors: Sorted ${type} results by taskId and originalIndex`);
-      });
-
-      // Format results with tags
-      const formattedParts = [];
-
-      // Process world info first
-      if (groupedResults.world_info && groupedResults.world_info.length > 0) {
-        const wiTexts = groupedResults.world_info
-          .map(m => m.text)
-          .filter(onlyUnique)
-          .join('\n\n');
-
-        const tag = settings.content_tags?.world_info || 'world_part';
-        formattedParts.push(`<${tag}>\n${wiTexts}\n</${tag}>`);
-      }
-
-      // Process files second
-      if (groupedResults.file && groupedResults.file.length > 0) {
-        const fileTexts = groupedResults.file
-          .map(m => m.text)
-          .filter(onlyUnique)
-          .join('\n\n');
-
-        const tag = settings.content_tags?.file || 'databank';
-        formattedParts.push(`<${tag}>\n${fileTexts}\n</${tag}>`);
-      }
-
-      // Process chat messages last
-      if (groupedResults.chat && groupedResults.chat.length > 0) {
-        const chatTexts = groupedResults.chat
-          .map(m => m.text)
-          .filter(onlyUnique)
-          .join('\n\n');
-
-        const tag = settings.content_tags?.chat || 'past_chat';
-        formattedParts.push(`<${tag}>\n${chatTexts}\n</${tag}>`);
-      }
-
-      // Process unknown type (fallback for items without type metadata)
-      if (groupedResults.unknown && groupedResults.unknown.length > 0) {
-        console.debug('Vectors: Processing unknown type results as fallback');
-        const unknownTexts = groupedResults.unknown
-          .map(m => m.text)
-          .filter(onlyUnique)
-          .join('\n\n');
-
-        // 使用通用标签或根据任务名称推断
-        const tag = 'context'; // 使用通用的context标签
-        formattedParts.push(`<${tag}>\n${unknownTexts}\n</${tag}>`);
-      }
-
-      // Join all parts
-      const relevantTexts = formattedParts.join('\n\n');
-
-      console.debug(`Vectors: Formatted ${formattedParts.length} parts, total length: ${relevantTexts.length}`);
-
-      if (relevantTexts && relevantTexts.trim()) {
-        insertedText = substituteParamsExtended(settings.template, { text: relevantTexts });
-        console.debug(`Vectors: Final injected text length: ${insertedText.length}`);
-        totalChars = insertedText.length;
-
-        // 保存注入的内容和统计信息，供预览功能使用
-        lastInjectedContent = insertedText;
-        lastInjectedStats = {
-          totalChars: totalChars,
-          chatCount: groupedResults.chat?.length || 0,
-          fileCount: groupedResults.file?.length || 0,
-          worldInfoCount: groupedResults.world_info?.length || 0,
-          unknownCount: groupedResults.unknown?.length || 0,
-          queryInstructionEnabled: settings.query_instruction_enabled,
-          rerankEnabled: rerankService && rerankService.isEnabled(),
-          deduplicationEnabled: settings.rerank_deduplication_enabled,
-          originalQueryCount: originalQueryCount,
-          finalCount: topResults.length
-        };
-
-        // 收集最终排序后的结果（按照originalIndex排序后）
-        const finalSortedResults = [];
-
-        // 按照注入顺序收集结果：world_info -> file -> chat
-        if (groupedResults.world_info) {
-          finalSortedResults.push(...groupedResults.world_info);
-        }
-        if (groupedResults.file) {
-          finalSortedResults.push(...groupedResults.file);
-        }
-        if (groupedResults.chat) {
-          finalSortedResults.push(...groupedResults.chat);
-        }
-        if (groupedResults.unknown) {
-          finalSortedResults.push(...groupedResults.unknown);
+        // 更新 debug UI
+        if (res.debug) {
+          try {
+            $('#bm25_debug_tokens').text(res.debug.query_tokens || '-');
+            $('#bm25_debug_matches').text(res.debug.fts_matches || 0);
+            $('#bm25_debug_time').text(res.debug.elapsed_ms || 0);
+            const preview = (res.items || [])
+              .map((r, i) => `${i+1}. [${(r.score || 0).toFixed(3)}] ${(r.text || '')}`)
+              .join('\n\n');
+            $('#bm25_debug_output').val(preview || '无匹配结果');
+          } catch(e) {}
         }
 
-        // 保存详细的查询信息
-        lastQueryDetails = {
-          queryText: queryText,
-          resultsBeforeRerank: resultsBeforeRerank, // 保存所有结果，不限制数量
-          resultsAfterRerank: topResults,
-          finalSortedResults: finalSortedResults, // 最终按originalIndex排序后的结果
-          rerankApplied: rerankApplied
-        };
-
-        setExtensionPrompt(
-          EXTENSION_PROMPT_TAG,
-          insertedText,
-          settings.position,
-          settings.depth,
-          settings.include_wi,
-          settings.depth_role,
-        );
-      } else {
-        console.debug('Vectors: No relevant texts found after formatting');
-        // 清空之前可能设置的内容
-        setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.depth_role);
-
-        // 也清空保存的内容
-        lastInjectedContent = null;
-        lastInjectedStats = null;
-        lastQueryDetails = null;
-      }
-    }
-
-    // 显示查询结果通知（统一处理，无论是否有结果）
-    if (settings.show_query_notification) {
-      const currentTime = Date.now();
-
-      // 防重复通知：检查冷却时间
-      if (currentTime - lastNotificationTime < NOTIFICATION_COOLDOWN) {
-        console.debug('Vectors: Notification skipped due to cooldown');
-        logTimingAndReturn('通知冷却中');
-        return;
-      }
-
-      const finalCount = topResults.length;    // 最终注入的数量
-
-      // 检查是否真的注入了内容
-      const actuallyInjected = insertedText && insertedText.trim().length > 0;
-
-      let message;
-      const isRerankEnabled = rerankService && rerankService.isEnabled();
-      if (isRerankEnabled && finalCount > 0) {
-        // 如果启用了重排，显示重排后的数量
-        message = `查询到 ${originalQueryCount} 个块，重排后`;
-        if (actuallyInjected) {
-          message += `注入 ${finalCount} 个块。`;
-        } else {
-          message += `尝试注入 ${finalCount} 个块，但文本获取失败。`;
-        }
-      } else {
-        // 如果没有启用重排，显示原始查询数量和最终注入数量
-        message = `查询到 ${originalQueryCount} 个块`;
-        if (finalCount > 0) {
-          if (actuallyInjected) {
-            // 如果查询数量和注入数量不同，显示两个数字
-            if (originalQueryCount > finalCount) {
-              message += `，注入 ${finalCount} 个块。`;
-            } else {
-              message += '，已注入。';
+        if (!res || !res.items) return [];
+        return res.items.map(item => {
+          const tId = item.metadata?.taskId;
+          const task = tasks.find(t => t.taskId === tId);
+          const strategy = task ? (task.isRealtime ? {
+            boost: settings.realtime_boost !== undefined ? settings.realtime_boost : 1.0
+          } : (task.retrievalSettings || { boost: 1.0 })) : { boost: 1.0 };
+          const finalScore = (item.score || 0) * (strategy.boost ?? 1.0);
+          return {
+            text: item.text,
+            score: finalScore,
+            rawScore: item.score || 0,
+            sourceTag: 'BM25',
+            metadata: {
+              ...item,
+              taskName: task ? task.name : 'BM25',
+              taskId: tId || 'bm25',
+              type: 'bm25'
             }
+          };
+        });
+      } catch (err) {
+        console.error('[Vectors] BM25 query failed:', err);
+        return [];
+      }
+    };
+
+    // ========== v7.1 Egos（理性分支）==========
+    // 前端直调 LLM API 或通过 ArcFess /thought_proxy 后端代理
+    const _stepSettingsCache = {};
+    const _resolveStepSettings = (stepNum) => {
+      if (_stepSettingsCache[stepNum] !== undefined) return _stepSettingsCache[stepNum];
+      const custom = settings[`thought_engine_step${stepNum}_custom`];
+      if (!custom) { _stepSettingsCache[stepNum] = null; return null; }
+      const result = {
+        url: settings[`thought_engine_step${stepNum}_url`] || settings.thought_engine_url,
+        apiKey: settings[`thought_engine_step${stepNum}_apiKey`] || settings.thought_engine_apiKey,
+        model: settings[`thought_engine_step${stepNum}_model`] || settings.thought_engine_model,
+        max_tokens: settings[`thought_engine_step${stepNum}_max_tokens`] || settings.thought_engine_max_tokens,
+        timeout: settings[`thought_engine_step${stepNum}_timeout`] || settings.thought_engine_timeout,
+      };
+      _stepSettingsCache[stepNum] = result;
+      return result;
+    };
+
+    // 🔧 v7.3: 统一的内容提取函数，消除代理/直连两段重复代码
+    const _extractContent = (msg, contentMode) => {
+      if (!msg) return null;
+      let content;
+      if (contentMode === 'content_only') {
+        content = msg.content || null;
+      } else {
+        // Use logical OR (||) instead of null coalescing (??) so that empty string "" falls back to reasoning
+        content = msg.content || msg.reasoning_content || msg.reasoning;
+        if (!content && msg.reasoning_details?.length) {
+          content = msg.reasoning_details[0].text || msg.reasoning_details[0];
+        }
+      }
+      if (content && contentMode !== 'raw' && content.includes('\u003Cthink\u003E')) {
+        content = content.replace(/\u003Cthink\u003E[\s\S]*?\u003C\/think\u003E/g, '').trim();
+      }
+      return content || null;
+    };
+
+    // 🔧 v7.3: 带指数退避重试的 LLM 调用函数 (致命.Fix#2)
+    const callLLM = async (promptText, label, stepOverrides = null) => {
+      const useProxy = stepOverrides?.useProxy !== undefined ? stepOverrides.useProxy : (settings.thought_engine_use_proxy !== false);
+      let proxyUrl = settings.thought_engine_proxy_url || `http://${window.location.hostname}:8999/thought_proxy`;
+      if (proxyUrl.includes('127.0.0.1') && window.location.hostname !== '127.0.0.1') {
+          proxyUrl = proxyUrl.replace(/127\.0\.0\.1/g, window.location.hostname);
+      }
+      if (proxyUrl.includes('localhost') && window.location.hostname !== 'localhost') {
+          proxyUrl = proxyUrl.replace(/localhost/g, window.location.hostname);
+      }
+      const apiUrl = stepOverrides?.url || settings.thought_engine_url;
+      const apiKey = stepOverrides?.apiKey || settings.thought_engine_apiKey;
+      const model = stepOverrides?.model || settings.thought_engine_model || 'Qwen/Qwen2.5-7B-Instruct';
+      const timeoutSec = stepOverrides?.timeout || settings.thought_engine_timeout || 90;
+      const maxTokens = stepOverrides?.max_tokens || settings.thought_engine_max_tokens || 4096;
+      const temperature = stepOverrides?.temperature !== undefined ? stepOverrides.temperature : (settings.thought_engine_temperature !== undefined ? settings.thought_engine_temperature : 0.9);
+      const topP = stepOverrides?.top_p !== undefined ? stepOverrides.top_p : (settings.thought_engine_top_p !== undefined ? settings.thought_engine_top_p : 1.0);
+      const topK = stepOverrides?.top_k !== undefined ? stepOverrides.top_k : (settings.thought_engine_top_k !== undefined ? settings.thought_engine_top_k : 0);
+      const freqPen = stepOverrides?.frequency_penalty !== undefined ? stepOverrides.frequency_penalty : (settings.thought_engine_frequency_penalty !== undefined ? settings.thought_engine_frequency_penalty : 0);
+      const presPen = stepOverrides?.presence_penalty !== undefined ? stepOverrides.presence_penalty : (settings.thought_engine_presence_penalty !== undefined ? settings.thought_engine_presence_penalty : 0);
+      const reasoningEffort = stepOverrides?.reasoning_effort !== undefined ? stepOverrides.reasoning_effort : (settings.thought_engine_reasoning_effort || '');
+
+      const retryEnabled = settings.thought_engine_retry_enabled !== false;
+      const maxRetries = retryEnabled ? Math.max(0, settings.thought_engine_retry_count ?? 3) : 0;
+      const retryDelay = Math.max(100, settings.thought_engine_retry_delay ?? 1000);
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const t0 = Date.now();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutSec * 1000);
+
+        try {
+          let response;
+          if (useProxy) {
+            let reqBody = {
+              url: apiUrl,
+              api_key: apiKey,
+              auth_type: settings.thought_engine_auth_type || 'bearer',
+              model: model,
+              messages: [{ role: 'user', content: promptText }],
+              temperature: temperature,
+              top_p: topP,
+              top_k: topK,
+              frequency_penalty: freqPen,
+              presence_penalty: presPen,
+              max_tokens: maxTokens,
+              timeout: timeoutSec,
+              verify_ssl: false
+            };
+            if (reasoningEffort) reqBody.reasoning_effort = reasoningEffort;
+
+            response = await fetch(proxyUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(reqBody),
+              signal: controller.signal
+            });
           } else {
-            message += '，但文本获取失败，未能注入。';
+            let reqBody2 = {
+              model: model,
+              messages: [{ role: 'user', content: promptText }],
+              temperature: temperature,
+              top_p: topP,
+              top_k: topK,
+              frequency_penalty: freqPen,
+              presence_penalty: presPen,
+              max_tokens: maxTokens
+            };
+            if (reasoningEffort) reqBody2.reasoning_effort = reasoningEffort;
+
+            response = await fetch(apiUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+              },
+              body: JSON.stringify(reqBody2),
+              signal: controller.signal
+            });
+          }
+          clearTimeout(timeoutId);
+
+          let data;
+          try {
+            data = await response.json();
+          } catch (jsonErr) {
+            const errMsg = `Non-JSON response: ${jsonErr.message}`;
+            if (attempt >= maxRetries) {
+              console.warn(`[Vectors] ❌ ${label} 返回非 JSON 格式 (${Date.now() - t0}ms)`, jsonErr.message);
+              if (typeof toastr !== 'undefined') toastr.error(`Egos ${label}: API 返回非 JSON 格式`, "Egos Debug", { timeOut: 10000 });
+              return null;
+            }
+            throw new Error(errMsg);
+          }
+          console.log(`[Vectors] 👁️ ${label} 返回 ->`, data);
+
+          if (!response.ok) {
+            const errObj = data.error;
+            const errMsg = (typeof errObj === 'object' && errObj !== null)
+              ? (errObj.message || errObj.code || JSON.stringify(errObj))
+              : (errObj || `HTTP ${response.status}`);
+            throw new Error(errMsg);
+          }
+
+          // 统一调用提取函数
+          if (data.choices && data.choices[0] && data.choices[0].message) {
+            const contentMode = settings.thought_engine_content_mode || 'strip_think';
+            const content = _extractContent(data.choices[0].message, contentMode);
+            if (content != null) return content.trim();
+            console.warn(`[Vectors] ❌ ${label} content 为空 (推理模型端点格式)`, JSON.stringify(data.choices[0].message).slice(0, 500));
+            return null;
+          }
+
+          if (attempt >= maxRetries) {
+            console.warn(`[Vectors] ❌ ${label} 拆包失败`, data);
+            return null;
+          }
+          throw new Error(`${label} 拆包格式异常`);
+
+        } catch (err) {
+          clearTimeout(timeoutId);
+          const elapsed = Date.now() - t0;
+
+          // 还有重试次数 → 延迟后继续
+          if (attempt < maxRetries) {
+            const delay = retryDelay * (attempt + 1);
+            console.warn(`[Vectors] 🔄 ${label} 第 ${attempt + 1}/${maxRetries + 1} 次失败 (${elapsed}ms)，${delay}ms 后重试...`, err.name, err.message);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+
+          // 最终失败：报告错误
+          console.warn(`[Vectors] ❌ ${label} 全部 ${maxRetries + 1} 次尝试失败 (${elapsed}ms / 配置超时${timeoutSec}s):`, err.name, err.message);
+          if (typeof toastr !== 'undefined') {
+            const isCompression = label === 'Compression';
+            const toastPrefix = isCompression ? "压缩异常" : "Egos异常";
+            const toastTitle = isCompression ? "Compression Debug" : "Egos Debug";
+            
+            if (err.name === 'AbortError') {
+              toastr.error(`${toastPrefix} (${(elapsed/1000).toFixed(1)}s / 配置 ${timeoutSec}s)，已降级。`, toastTitle, { timeOut: 10000 });
+            } else if (err.message && err.message.includes("429")) {
+              toastr.error(`${toastPrefix}被限流 (429)，已降级。`, toastTitle, { timeOut: 10000 });
+            } else if (err.message && (err.message.includes("timeout") || err.message.includes("Timeout"))) {
+              toastr.error(`${toastPrefix} (API 层超时)，已降级。`, toastTitle, { timeOut: 10000 });
+            } else if (err.name === 'TypeError' && err.message && err.message.includes('Failed to fetch')) {
+              const modeHint = useProxy
+                ? '代理无法连接到 ArcFess 后端 (请检查 vector_server.py 是否运行在 8999 端口)'
+                : 'CORS 拦截或端点不可达';
+              toastr.error(`${toastPrefix}网络不通: ${modeHint}`, toastTitle, { timeOut: 10000 });
+            } else {
+              toastr.error(`${toastPrefix} (${(elapsed/1000).toFixed(1)}s): ${err.message}`, toastTitle, { timeOut: 10000 });
+            }
+          }
+          return null;
+        }
+      }
+      return null;
+    };
+
+    const fetchThought = async (chatHistoryText) => {
+      // 预格式化所有消息，避免多 step 重复做 replace/map 计算
+      const formattedLines = validChat.map(x => {
+        const speaker = x.is_user ? 'Jc_ker' : (x.name || 'Char');
+        const cleanMes = getTextWithoutAttachments(x).replace(/<[^>]*>/g, '').trim();
+        return `${speaker}: ${cleanMes}`;
+      });
+      const stepCtxCache = {};
+      const _buildChatHistory = (stepNum) => {
+        const stepCtx = settings[`thought_engine_step${stepNum}_context_size`];
+        const ctxSize = (stepCtx !== '' && stepCtx !== undefined)
+            ? parseInt(stepCtx)
+            : (settings.thought_engine_context_size || 3);
+        if (stepCtxCache[ctxSize]) return stepCtxCache[ctxSize];
+        const text = formattedLines.slice(-ctxSize).join('\n');
+        stepCtxCache[ctxSize] = text;
+        return text;
+      };
+
+      if (!settings.thought_engine_enabled) return null;
+      // v7.3: 检查全局 API 设置 OR 任一 Step 的自定义 API 是否可用，不再因全局空而拦截分步配置
+      const _hasAnyValidStepApi = () => {
+        for (let n = 1; n <= 3; n++) {
+          if (settings[`thought_engine_step${n}_enabled`] !== false &&
+              settings[`thought_engine_step${n}_custom`] === true &&
+              settings[`thought_engine_step${n}_url`] &&
+              settings[`thought_engine_step${n}_apiKey`]) {
+            return true;
+          }
+        }
+        return false;
+      };
+      const hasGlobalApi = !!(settings.thought_engine_url && settings.thought_engine_apiKey);
+      if (!hasGlobalApi && !_hasAnyValidStepApi()) {
+        if (typeof toastr !== 'undefined') toastr.warning("未配置Egos API（全局及分步均无有效设置）", "Egos Debug", { timeOut: 10000 });
+        return null;
+      }
+
+      const mode = settings.thought_engine_mode || 'cot';
+
+      // ── 多步调用模式：3 次串行 LLM 调用（任一步可独立开关，失败降级而非归零）──
+      if (mode === 'multi_call') {
+        const step1Enabled = settings.thought_engine_step1_enabled !== false;
+        const step2Enabled = settings.thought_engine_step2_enabled !== false;
+        const step3Enabled = settings.thought_engine_step3_enabled !== false;
+
+        if (!step1Enabled && !step2Enabled && !step3Enabled) {
+          if (typeof toastr !== 'undefined') toastr.warning("多步调用全部禁用，降级为纯感性检索", "Egos Debug", { timeOut: 10000 });
+          return null;
+        }
+
+        // Step 1: 场景分析
+        let sceneAnalysis = '';
+        if (step1Enabled) {
+          if (typeof toastr !== 'undefined') toastr.info("🧠 Step 1/3: 场景分析...", "Egos", { timeOut: 5000 });
+          const step1ChatHistory = _buildChatHistory(1);
+          const step1Prompt = settings.thought_engine_step1_prompt.replace('{{chat_history}}', step1ChatHistory);
+          sceneAnalysis = await callLLM(step1Prompt, 'Step1-场景', _resolveStepSettings(1));
+          if (!sceneAnalysis) {
+            sceneAnalysis = '';
+            if (typeof toastr !== 'undefined') toastr.warning("场景分析失败，继续执行后续步骤 (场景上下文为空)", "Egos Debug", { timeOut: 10000 });
           }
         } else {
-          message += '。';
+          if (typeof toastr !== 'undefined') toastr.info("⏭️ Step 1/3: 场景分析已跳过", "Egos", { timeOut: 5000 });
         }
+
+        // Step 2: 意图推断（失败时用场景分析兜底）
+        let intentAnalysis = null;
+        if (step2Enabled) {
+          if (typeof toastr !== 'undefined') toastr.info("🧠 Step 2/3: 意图推断...", "Egos", { timeOut: 5000 });
+          const step2ChatHistory = _buildChatHistory(2);
+          const step2Prompt = settings.thought_engine_step2_prompt
+            .replace('{{scene_analysis}}', sceneAnalysis)
+            .replace('{{chat_history}}', step2ChatHistory);
+          intentAnalysis = await callLLM(step2Prompt, 'Step2-意图', _resolveStepSettings(2));
+          if (!intentAnalysis) {
+            if (typeof toastr !== 'undefined') toastr.warning("意图推断失败，跳过 Step 2 继续", "Egos Debug", { timeOut: 10000 });
+          }
+        } else {
+          if (typeof toastr !== 'undefined') toastr.info("⏭️ Step 2/3: 意图推断已跳过", "Egos", { timeOut: 5000 });
+        }
+
+        // Step 3: 关键词生成（失败时用意图推断兜底，意图推断也失败时用场景分析兜底）
+        let keywords = null;
+        if (step3Enabled) {
+          if (typeof toastr !== 'undefined') toastr.info("🧠 Step 3/3: 关键词生成...", "Egos", { timeOut: 5000 });
+          const step3ChatHistory = _buildChatHistory(3);
+          const step3Prompt = settings.thought_engine_step3_prompt
+            .replace('{{scene_analysis}}', sceneAnalysis)
+            .replace('{{intent_analysis}}', intentAnalysis || sceneAnalysis)
+            .replace('{{chat_history}}', step3ChatHistory);
+          keywords = await callLLM(step3Prompt, 'Step3-关键词', _resolveStepSettings(3));
+          if (!keywords) {
+            if (typeof toastr !== 'undefined') toastr.warning("关键词生成失败，使用意图推断作为关键词", "Egos Debug", { timeOut: 10000 });
+          }
+        } else {
+          if (typeof toastr !== 'undefined') toastr.info("⏭️ Step 3/3: 关键词生成已跳过", "Egos", { timeOut: 5000 });
+        }
+
+        const fallbackKeywords = keywords || intentAnalysis || sceneAnalysis;
+        // 更新持久化展示
+        const fullOutput = `场景：${sceneAnalysis || '(已禁用)'}\n意图：${intentAnalysis || '(已禁用/跳过)'}\n关键词：${keywords || '(降级: 使用意图推断)'}`;
+        try { $('#vectors_enhanced_thought_output').val(fullOutput); $('#thought_output_mode').text('多步调用'); } catch(e) {}
+
+        if (fallbackKeywords && typeof toastr !== 'undefined') {
+          const preview = fallbackKeywords.length > 80 ? fallbackKeywords.slice(0, 80) + '...' : fallbackKeywords;
+          toastr.success(`✅ 萃取意图: ${preview}`, "Egos", { timeOut: 15000 });
+        }
+        return fallbackKeywords;
       }
 
-      // 详细模式：显示来源分布
-      if (settings.detailed_notification && finalCount > 0) {
-        const sourceStats = {
-          chat: groupedResults.chat?.length || 0,
-          file: groupedResults.file?.length || 0,
-          world_info: groupedResults.world_info?.length || 0,
-        };
+      // ── CoT 模式（默认）：单次调用，内置思维链 ──
+      const cotPrompt = settings.thought_engine_prompt.replace('{{chat_history}}', chatHistoryText);
+      if (typeof toastr !== 'undefined') toastr.info("🧠 Egos运转中...", "Egos", { timeOut: 5000 });
+      const thoughtStart = Date.now();
+      const result = await callLLM(cotPrompt, 'CoT');
 
-        if (sourceStats.chat || sourceStats.file || sourceStats.world_info) {
-          const sources = [];
-          if (sourceStats.chat) sources.push(`聊天记录${sourceStats.chat}条`);
-          if (sourceStats.file) sources.push(`文件${sourceStats.file}条`);
-          if (sourceStats.world_info) sources.push(`世界信息${sourceStats.world_info}条`);
-          message += `\n来源：${sources.join('，')}`;
+      if (result) {
+        try {
+          $('#vectors_enhanced_thought_output').val(result);
+          $('#thought_output_mode').text('CoT');
+          $('#thought_output_time').text((Date.now() - thoughtStart) + 'ms');
+        } catch(e) {}
+        if (typeof toastr !== 'undefined') {
+          const preview = result.length > 80 ? result.slice(0, 80) + '...' : result;
+          toastr.success(`✅ 萃取意图: ${preview}`, "Egos", { timeOut: 15000 });
+        }
+        // v7.3: 从CoT完整输出中提取纯关键词部分用于向量检索 (致命.Fix#6)
+        const kwIdx = result.search(/关键词[：:]/);
+        if (kwIdx !== -1) {
+          const extracted = result.substring(kwIdx).replace(/^关键词[：:]\s*/, '').trim();
+          if (extracted.length > 0 && extracted.length < 200) return extracted;
         }
       }
+      return result;
+    };
 
-      const toastType = finalCount > 0 ? 'info' : 'warning';
-      toastr[toastType](message, '向量查询结果', { timeOut: 3000 });
+    // ═══════════════════════════════════════════════
+    // v7.2 三轨并发启动 + 4_Track 层级总管 -> 四轨并发 + 权重融合
+    // ═══════════════════════════════════════════════
+    let kimiKeywords = null;
+    let rawQueryPromise = fetchFaiss(queryText, 'RAW');
+    let thoughtQueryPromise = Promise.resolve([]);
+    let bm25Promise = fetchBM25(queryText);
+    let hierarchicalPromise = Promise.resolve('');
 
-      // 更新最后通知时间
-      lastNotificationTime = currentTime;
+    if (settings.realtime_sync_enabled && settings.realtime_retrieval_enabled && (settings.ve_hierarchical_floor_enabled || settings.ve_hierarchical_date_enabled)) {
+      hierarchicalPromise = fetchHierarchicalMemory(chatId, queryText);
     }
 
-    // 计算总耗时并输出到控制台
-    const queryEndTime = performance.now();
-    const totalDuration = queryEndTime - queryStartTime;
-    const resultCount = allResults.length;
-    const injectedCount = topResults.length;
-    console.log(`🔍 Vectors Enhanced: 查询到注入完成 - 总耗时: ${totalDuration.toFixed(2)}ms (查询${resultCount}条, 注入${injectedCount}条)`);
+    if (settings.thought_engine_enabled) {
+      if (typeof toastr !== 'undefined') toastr.info("🔍 三轨检索启动...", "ArcFess", { timeOut: 4000 });
+      thoughtQueryPromise = fetchThought(thoughtContextText).then(async (thoughtOutput) => {
+        if (thoughtOutput) {
+          kimiKeywords = thoughtOutput;
+          console.log("[Vectors] Egos输出 ->", thoughtOutput);
+          return await fetchFaiss(thoughtOutput, 'THOUGHT');
+        }
+        if (typeof toastr !== 'undefined') toastr.warning("理性分支无产出，降级为双轨检索", "ArcFess", { timeOut: 10000 });
+        return [];
+      });
+    }
+
+    // 等待四条时间线收束
+    const [rawResults, thoughtResults, bm25Results, hierarchicalText] = await Promise.all([
+      rawQueryPromise, 
+      thoughtQueryPromise, 
+      bm25Promise, 
+      hierarchicalPromise
+    ]);
+
+    // ── v7.2 权重融合 ──
+    const preLimit = settings.rerank_top_n || 20;
+    const wRaw = settings.weight_raw ?? 40;
+    const wThought = settings.weight_thought ?? 40;
+    const wBM25 = settings.weight_bm25 ?? 20;
+    const wTotal = (wRaw + wThought + wBM25) || 1;
+
+    rawResults.sort((a, b) => b.score - a.score);
+    thoughtResults.sort((a, b) => b.score - a.score);
+    bm25Results.sort((a, b) => b.score - a.score);
+
+    const rawQuota = Math.round(preLimit * wRaw / wTotal);
+    const thoughtQuota = Math.round(preLimit * wThought / wTotal);
+    const bm25Quota = Math.round(preLimit * wBM25 / wTotal);
+
+    let combinedPool = [
+      ...thoughtResults.slice(0, thoughtQuota),
+      ...rawResults.slice(0, rawQuota),
+      ...bm25Results.slice(0, bm25Quota)
+    ];
+
+    // 不足 → 按分数补位
+    if (combinedPool.length < preLimit) {
+      const usedTexts = new Set(combinedPool.map(i => i.text));
+      const overflow = [...rawResults, ...thoughtResults, ...bm25Results]
+        .filter(i => !usedTexts.has(i.text))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, preLimit - combinedPool.length);
+      combinedPool.push(...overflow);
+    }
+
+    // 三轨收束统计 toast
+    if (typeof toastr !== 'undefined') {
+      toastr.info(`📊 感性${rawResults.length} + 理性${thoughtResults.length} + BM25:${bm25Results.length} → 去重前${combinedPool.length}条`, "三轨收束", { timeOut: 6000 });
+    }
+
+    // ── 文本去重（按 text 内容完全匹配） ──
+    const uniquePool = new Map();
+    combinedPool.forEach(item => {
+      if (!uniquePool.has(item.text) || uniquePool.get(item.text).score < item.score) {
+        uniquePool.set(item.text, item);
+      }
+    });
+
+    let allRawResults = Array.from(uniquePool.values());
+    allRawResults.sort((a, b) => b.score - a.score); // v7.1: 全局排序，确保 Reranker 关闭时 top N 为最高分
+    const resultsBeforeRerank = allRawResults.slice();
+    let rerankApplied = false;
+
+    // ── Reranker 双 Prompt 编码 ──
+    if (rerankService && rerankService.isEnabled() && allRawResults.length > 0) {
+      if (typeof toastr !== 'undefined') toastr.info("🔄 Reranker 精排中...", "ArcFess", { timeOut: 5000 });
+
+      const rerankQuery = kimiKeywords
+        ? `${queryText} [意图:${kimiKeywords}]`
+        : queryText;
+      allRawResults = await rerankService.rerankResults(rerankQuery, allRawResults);
+      rerankApplied = true;
+
+      if (typeof toastr !== 'undefined') {
+        toastr.success(`✅ 精排完成: ${resultsBeforeRerank.length} → ${allRawResults.length} 条`, "ArcFess Reranker", { timeOut: 10000 });
+      }
+    }
+
+    // ── 【核心重构】底层保底算法与溢出回退机制 ──
+    const MAX_RESULTS = settings.max_results || 10;
+    
+    let reservedItems = [];
+    let remainingItems = [];
+    
+    const groupedByTask = new Map();
+    allRawResults.forEach(item => {
+        const tId = item.metadata?.taskId || 'unknown';
+        if (!groupedByTask.has(tId)) groupedByTask.set(tId, []);
+        groupedByTask.get(tId).push(item);
+    });
+
+    const taskQuotas = new Map();
+    tasks.forEach(t => {
+        let q = t.retrievalSettings?.quota || 0;
+        if (t.isRealtime) q = settings.realtime_quota || 0;
+        if (q > 0) taskQuotas.set(t.taskId, q);
+    });
+
+    groupedByTask.forEach((items, tId) => {
+        const quota = taskQuotas.get(tId) || 0;
+        if (quota > 0) {
+            reservedItems.push(...items.slice(0, quota));
+            remainingItems.push(...items.slice(quota));
+        } else {
+            remainingItems.push(...items);
+        }
+    });
+
+    let topResults = [];
+    if (reservedItems.length > MAX_RESULTS) {
+        if (settings.allow_quota_overflow) {
+            topResults = reservedItems;
+        } else {
+            reservedItems.sort((a, b) => b.score - a.score);
+            topResults = reservedItems.slice(0, MAX_RESULTS);
+        }
+    } else {
+        remainingItems.sort((a, b) => b.score - a.score);
+        const remainingSlots = MAX_RESULTS - reservedItems.length;
+        topResults = [...reservedItems, ...remainingItems.slice(0, remainingSlots)];
+    }
+
+    topResults.sort((a, b) => b.score - a.score);
+
+    // ── Contextual Compression (LLM Summarization) ──
+    if (settings.compression_enabled && topResults.length > 0) {
+      if (typeof toastr !== 'undefined') toastr.info("🔄 上下文压缩中...", "ArcFess", { timeOut: 5000 });
+      
+      const contextCount = parseInt(settings.compression_context_messages) || 3;
+      const recentContext = chat.slice(-contextCount)
+        .map(m => `${m.is_user ? 'User' : (m.name || 'Char')}: ${m.mes}`)
+        .join('\n\n');
+      
+      const batchSize = Math.max(1, parseInt(settings.compression_batch_size) || 5);
+      const compressedResults = [];
+      
+      for (let i = 0; i < topResults.length; i += batchSize) {
+        const batch = topResults.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (item) => {
+          const prompt = `${settings.compression_prompt}\n\n[当前对话上下文]\n${recentContext}\n\n[待判断的记忆碎片]\n${item.text}`;
+          
+          try {
+            const response = await callLLM(prompt, 'Compression', {
+              url: settings.compression_url,
+              apiKey: settings.compression_apiKey,
+              model: settings.compression_model,
+              useProxy: settings.compression_use_proxy,
+              timeout: 90,
+              max_tokens: settings.compression_max_tokens || 4096,
+              temperature: settings.compression_temperature,
+              top_p: settings.compression_top_p,
+              top_k: settings.compression_top_k,
+              frequency_penalty: settings.compression_frequency_penalty,
+              presence_penalty: settings.compression_presence_penalty,
+              reasoning_effort: settings.compression_reasoning_effort
+            });
+            
+            // 兼容推理模型：推理模型会在思考过程中（reasoning_content）重复 prompt，导致普通的 includes 误杀。
+            // 因此我们只检查最终输出的末尾部分（最后30个字符）是否包含【丢弃】，或者全文就是丢弃。
+            const cleanResponse = response ? response.trim() : '';
+            const isDiscarded = response && (
+              cleanResponse === '【丢弃】' || 
+              cleanResponse === '丢弃' || 
+              cleanResponse.slice(-30).includes('【丢弃】')
+            );
+
+            if (isDiscarded) {
+              return null; // 剔除
+            } else if (response) {
+              // 替换文本
+              return { ...item, text: response };
+            } else {
+              return item; // 异常/空返回，保留原样
+            }
+          } catch (e) {
+            console.warn('[Vectors] Compression failed for chunk, keeping original text', e);
+            return item; // 原样保留
+          }
+        });
+        
+        const processedBatch = await Promise.all(batchPromises);
+        compressedResults.push(...processedBatch.filter(Boolean));
+      }
+      
+      topResults = compressedResults;
+      
+      if (typeof toastr !== 'undefined') {
+        toastr.success(`✅ 压缩完成: 剩余 ${topResults.length} 条`, "ArcFess Compression", { timeOut: 5000 });
+      }
+    }
+
+    // ── v7.1 Prompt 组装（并合 4_Track 层级与时间规则） ──
+    let insertedText = '';
+
+    if (topResults.length > 0) {
+      const memoryTexts = topResults.map(r => r.text).filter(onlyUnique).join('\n\n---\n\n');
+      insertedText = substituteParamsExtended(settings.template, { text: memoryTexts });
+    }
+
+    if (hierarchicalText) {
+      insertedText = (insertedText ? (insertedText + '\n\n') : '') + hierarchicalText;
+    }
+
+    let injectRuleText = '';
+    if (settings.realtime_sync_enabled && (settings.ve_hierarchical_floor_enabled || settings.ve_hierarchical_date_enabled) && settings.ve_hierarchical_inject_date_rule) {
+      const today = getCurrentDateString();
+      injectRuleText = `\n\n[System Rule: The current real-world date is ${today}. You MUST append <ArcTime: ${today}> at the very end of your response to mark the current story time.]`;
+    }
+
+    if (insertedText || injectRuleText) {
+      insertedText = (insertedText || '') + injectRuleText;
+
+      lastInjectedContent = insertedText;
+      lastInjectedStats = {
+        totalChars: insertedText.length,
+        finalCount: topResults.length,
+        senseCount: rawResults.length,
+        reasonCount: thoughtResults.length,
+        bm25Count: bm25Results.length,
+        rerankApplied: rerankApplied,
+      };
+
+      lastQueryDetails = {
+        queryText: queryText,
+        resultsBeforeRerank: resultsBeforeRerank,
+        resultsAfterRerank: topResults,
+        finalSortedResults: topResults,
+        rerankApplied: rerankApplied,
+        kimiKeywords: kimiKeywords,
+        _resultsBeforeRerankSnapshot: resultsBeforeRerank,
+        _deepCopyDone: false
+      };
+
+      setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, settings.position, settings.depth, settings.include_wi, settings.depth_role);
+    } else {
+      setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.depth_role);
+    }
+
+    // ── 通知 ──
+    if (settings.show_query_notification) {
+      const currentTime = Date.now();
+      if (currentTime - lastNotificationTime >= NOTIFICATION_COOLDOWN) {
+        const count = topResults.length;
+        let msg = count > 0
+          ? `检索完成: 汇聚 ${count} 条碎片`
+          : `检索完成: 记忆之海寂静无声`;
+
+        if (settings.detailed_notification && count > 0) {
+          msg += `<br><small>感性${rawResults.length} | 理性${thoughtResults.length} | BM25:${bm25Results.length} | 精排后${count}</small>`;
+        }
+        
+        const rtHits = topResults.filter(r => r.metadata?.taskId?.startsWith('rt_')).length;
+        if (rtHits > 0 || window.vectors_rt_last_synced_index !== undefined) {
+          let rtMsg = `⚡ 实时`;
+          if (window.vectors_rt_last_synced_index !== undefined) {
+             const offset = settings.realtime_floor_offset || 0;
+             const displayLayer = window.vectors_rt_last_synced_index + offset;
+             rtMsg += ` (已同步至 #${displayLayer} 层)`;
+          }
+          if (rtHits > 0) {
+             rtMsg += ` 命中: ${rtHits} 条`;
+          }
+          msg += `<br><small style="color: #38bdf8; font-weight: bold;">${rtMsg}</small>`;
+        }
+
+        toastr[count > 0 ? 'info' : 'warning'](msg, 'ArcFess');
+        lastNotificationTime = currentTime;
+      }
+    }
+
+    console.log(`[Vectors] 全链路完成 - 耗时: ${(performance.now() - queryStartTime).toFixed(2)}ms`);
 
   } catch (error) {
-    console.error('Vectors: Failed to rearrange chat', error);
-    logTimingAndReturn('执行出错', true);
+    console.error('[Vectors] 检索失败', error);
+  } finally {
+    // 3. 无论成功失败，最后必须释放锁，否则下次无法运行
+    isQuerying = false;
   }
 }
 
-window['vectors_rearrangeChat'] = rearrangeChat;
+window['vectors_enhanced_rearrangeChat'] = rearrangeChat;
 
 /**
  * Get the last injected content for preview
  * @returns {Object} Last injected content and stats
  */
 function getLastInjectedContent() {
+  // 【Plan B 懒加载】只有用户点击预览时才执行深拷贝
+  if (lastQueryDetails && lastQueryDetails._resultsBeforeRerankSnapshot && !lastQueryDetails._deepCopyDone) {
+    lastQueryDetails.resultsBeforeRerank = JSON.parse(JSON.stringify(lastQueryDetails._resultsBeforeRerankSnapshot));
+    lastQueryDetails._deepCopyDone = true;
+  }
   return {
     content: lastInjectedContent,
     stats: lastInjectedStats,
@@ -2989,6 +3235,11 @@ function getVectorsRequestBody(args = {}) {
         'http://localhost:11434';
       body.keep = !!settings.ollama_keep;
       break;
+    case 'openai':
+      body.apiUrl = settings.openai_url || 'https://api.openai.com/v1';
+      body.model = settings.openai_model || 'text-embedding-3-small';
+      body.apiKey = settings.openai_api_key || '';
+      break;
   }
 
   body.source = settings.source;
@@ -3017,6 +3268,18 @@ function throwIfSourceInvalid() {
     }
     // ollama_url 是可选的，因为有默认值 http://localhost:11434
   }
+
+  if (settings.source === 'openai') {
+    if (!settings.openai_url) {
+      throw new Error('OpenAI URL not configured');
+    }
+    if (!settings.openai_model) {
+      throw new Error('OpenAI model not specified');
+    }
+    if (!settings.openai_api_key) {
+      throw new Error('OpenAI API Key not configured');
+    }
+  }
 }
 
 
@@ -3030,12 +3293,333 @@ function throwIfSourceInvalid() {
 
 
 
+function updateRealtimeDashboard() {
+  const context = getContext();
+  if (!context || !context.chatId) return;
+
+  const collectionId = `rt_${context.chatId}`;
+  const rtTask = settings.vector_tasks?.[context.chatId]?.find(t => t.taskId === collectionId);
+  const chat = context.chat || [];
+
+  // 计算预计符合同步条件的总消息数
+  let expectedCount = 0;
+  chat.forEach((msg, index) => {
+    if (index === chat.length - 1 && !msg.is_user && !msg.is_system) return; // Swipe Immunity: 跳过处于最末尾的AI消息
+
+    if (!msg.mes || !msg.mes.trim()) return;
+    if (msg.is_user && !settings.realtime_sync_user) return;
+    if (!msg.is_user && !msg.is_system && !settings.realtime_sync_assistant) return;
+    if (msg.is_system && !settings.realtime_sync_hidden) return;
+    
+    const fileLength = msg?.extra?.fileLength || 0;
+    let text = msg.mes;
+    if (fileLength > 0 && fileLength <= text.length) {
+        text = text.substring(fileLength).trim();
+    }
+    if (text) {
+      expectedCount++;
+    }
+  });
+
+  const syncedCount = rtTask ? (rtTask.itemCount || 0) : 0;
+  const pendingCount = Math.max(0, expectedCount - syncedCount);
+
+  if (rtTask) {
+    if (pendingCount > 0) {
+      $('#ve_rt_status').html(`<i class="fa-solid fa-rotate fa-spin-hover"></i> 有 ${pendingCount} 条未同步`).css('color', '#fbbf24');
+    } else {
+      $('#ve_rt_status').html('<i class="fa-solid fa-check"></i> 实时同步中').css('color', '#34d399');
+    }
+    $('#ve_rt_id').text(rtTask.taskId);
+    $('#ve_rt_count').text(syncedCount);
+    $('#ve_rt_expected').text(expectedCount);
+    $('#ve_rt_pending').text(pendingCount);
+    $('#ve_rt_last_sync').text(new Date(rtTask.timestamp).toLocaleTimeString());
+    
+    let percentage = expectedCount > 0 ? (syncedCount / expectedCount) * 100 : 0;
+    if (percentage > 100) percentage = 100;
+    $('#ve_rt_progress_bar').css('width', `${percentage}%`);
+  } else {
+    $('#ve_rt_status').text(`❌ 未建库 (请点击下方扫描建库)`).css('color', '#fbbf24');
+    $('#ve_rt_id').text(collectionId);
+    $('#ve_rt_count').text('0');
+    $('#ve_rt_expected').text(expectedCount);
+    $('#ve_rt_pending').text(expectedCount);
+    $('#ve_rt_last_sync').text('-');
+    $('#ve_rt_progress_bar').css('width', `0%`);
+    $('#ve_rt_cutoff_notice').hide();
+  }
+}
+
+// ================= 实时向量化 (增量同步) 逻辑 =================
+const rtSyncLocks = new Set();
+const rtSyncFollowUps = new Set();
+
+async function syncChatVectors(manualTrigger = false) {
+  if (!settings.master_enabled || !settings.realtime_sync_enabled) return;
+  const context = getContext();
+  if (!context || !context.chatId || !context.chat) return;
+
+  const chatId = context.chatId;
+  const chat = context.chat;
+  
+  if (rtSyncLocks.has(chatId)) {
+    if (manualTrigger) {
+      toastr.warning('实时同步任务已在后台运行中，请等待其完成。');
+    } else {
+      rtSyncFollowUps.add(chatId);
+    }
+    return;
+  }
+  
+  const collectionId = `rt_${chatId}`; // 使用独立前缀，避免与旧版全量冲突
+
+  try {
+    rtSyncLocks.add(chatId);
+    
+    // --- 极速启动：初始化截断机制 (startIndex) ---
+    // 寻找该聊天是否已经注册过专属任务，获取截断点
+    let rtTaskIndex = settings.vector_tasks?.[chatId]?.findIndex(t => t.taskId === collectionId) ?? -1;
+    let rtTask = rtTaskIndex !== -1 ? settings.vector_tasks[chatId][rtTaskIndex] : null;
+
+    let startIndex = 0;
+    if (manualTrigger) {
+      startIndex = 0; // 手动强制全量扫描
+    } else if (rtTask && rtTask.startIndex !== undefined) {
+      startIndex = Math.min(rtTask.startIndex, Math.max(0, chat.length - 50));
+    } else if (chat.length > 100) {
+      // 如果没注册过，并且聊天很长，为了防止初始化炸手机，只取最后 50 条
+      startIndex = chat.length - 50;
+    }
+
+    const localMsgs = new Map();
+    chat.forEach((msg, index) => {
+      if (index < startIndex) return; // 屏蔽掉长对话的古老历史，防止级联重构爆炸
+      if (index === chat.length - 1 && !msg.is_user && !msg.is_system) return; // Swipe Immunity
+
+      if (!msg.mes || !msg.mes.trim()) return;
+      if (msg.is_user && !settings.realtime_sync_user) return;
+      if (!msg.is_user && !msg.is_system && !settings.realtime_sync_assistant) return;
+      if (msg.is_system && !settings.realtime_sync_hidden) return;
+      
+      const fileLength = msg?.extra?.fileLength || 0;
+      let text = msg.mes;
+      if (fileLength > 0 && fileLength <= text.length) {
+          text = text.substring(fileLength).trim();
+      }
+      if (!text) return;
+
+      const roleName = msg.name || (msg.is_user ? 'User' : 'Character');
+      
+      // 【核心修复】废弃 index，采用“角色+内容”生成绝对稳定的 Hash
+      const stableString = `${roleName}_${text}`;
+      const stableHash = stableString.split('').reduce((a,b)=>{a=((a<<5)-a)+b.charCodeAt(0);return a&a},0).toString(36);
+      const uid = `${chatId}_${stableHash}`;
+
+      // 这里依旧可以在文本里保留日期前缀供模型阅读，但不参与 Hash
+      let datePrefix = '';
+      if (msg.send_date) {
+        try {
+          const d = new Date(msg.send_date);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            datePrefix = `[${yyyy}-${mm}-${dd}] `;
+          }
+        } catch (e) {}
+      }
+      const finalText = `${datePrefix}[${roleName}]: ${text}`;
+      
+      localMsgs.set(uid, {
+        text: finalText,
+        metadata: { uid, index, is_user: msg.is_user, name: msg.name, is_hidden: msg.is_system === true }
+      });
+    });
+
+    // --- 引入“幽灵缓存” (Memory Cache) ---
+    if (!window.vectors_rt_cache) window.vectors_rt_cache = new Map();
+    let remoteUidSet;
+    if (window.vectors_rt_cache.has(collectionId)) {
+      remoteUidSet = window.vectors_rt_cache.get(collectionId);
+    } else {
+      const remoteUids = await storageAdapter.getCollectionIds(collectionId);
+      remoteUidSet = new Set(remoteUids);
+      window.vectors_rt_cache.set(collectionId, remoteUidSet);
+    }
+
+    const toInsert = [];
+    for (const [uid, data] of localMsgs.entries()) {
+      if (!remoteUidSet.has(uid)) toInsert.push(data);
+    }
+    const toDelete = [];
+    for (const uid of remoteUidSet) {
+      if (!localMsgs.has(uid)) toDelete.push(uid);
+    }
+
+    // --- 拦截大量同步机制 ---
+    // 如果是首次建库（remote 为空）或者存在大量未同步记录，拦截并询问用户
+    if ((manualTrigger || remoteUidSet.size === 0) && toInsert.length > 5) {
+      const confirm = await callGenericPopup(
+        `<div><strong>创建专属向量库</strong><p>检测到当前会话有 <b>${toInsert.length}</b> 条记录未同步。</p><p>要继续使用实时同步，必须先将其写入专属库。这可能需要消耗一定时间，是否立即执行？</p><small style="color:var(--warning)">点击“否”将自动关闭该对话的实时同步功能。</small></div>`,
+        POPUP_TYPE.CONFIRM, { okButton: '立即建库/同步', cancelButton: '否' }
+      );
+      if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+        settings.realtime_sync_enabled = false;
+        $('#vectors_enhanced_realtime_sync_enabled').prop('checked', false);
+        $('#vectors_enhanced_realtime_settings').slideUp();
+        saveSettingsDebounced();
+        return; // 用户反悔，直接退出
+      }
+    }
+
+    // --- 确保专属实时任务已注册，以便 updateRealtimeDashboard 读取数据并展示正确的初始状态 ---
+    let currentRtTaskIndex = -1;
+    if (!settings.vector_tasks) settings.vector_tasks = {};
+    if (!settings.vector_tasks[chatId]) settings.vector_tasks[chatId] = [];
+    const initialItemCount = remoteUidSet.size - toDelete.length;
+    
+    currentRtTaskIndex = settings.vector_tasks[chatId].findIndex(t => t.taskId === collectionId);
+    if (currentRtTaskIndex === -1) {
+      settings.vector_tasks[chatId].push({
+        taskId: collectionId,
+        name: '[专属实时记忆库]',
+        type: 'realtime',
+        isRealtime: true,
+        itemCount: initialItemCount,
+        originalItemCount: chat.length,
+        timestamp: Date.now(),
+        enabled: true,
+        startIndex: startIndex
+      });
+      currentRtTaskIndex = settings.vector_tasks[chatId].length - 1;
+    } else {
+      settings.vector_tasks[chatId][currentRtTaskIndex].itemCount = initialItemCount;
+      settings.vector_tasks[chatId][currentRtTaskIndex].originalItemCount = chat.length;
+      settings.vector_tasks[chatId][currentRtTaskIndex].timestamp = Date.now();
+      settings.vector_tasks[chatId][currentRtTaskIndex].startIndex = startIndex;
+    }
+    saveSettingsDebounced();
+    updateRealtimeDashboard();
+
+    if (toInsert.length > 0 || toDelete.length > 0) {
+      console.log(`[Vectors Realtime] Sync started. Insert: ${toInsert.length}, Delete: ${toDelete.length}`);
+      const progressDiv = $('#vectors_enhanced_realtime_progress');
+      const progressBar = $('#vectors_enhanced_realtime_progress_bar');
+      const progressText = $('#vectors_enhanced_realtime_progress_text');
+      progressDiv.show();
+
+      if (toDelete.length > 0) {
+        await storageAdapter.delete(toDelete);
+        toDelete.forEach(uid => remoteUidSet.delete(uid));
+      }
+
+      if (toInsert.length > 0) {
+        const BATCH_SIZE = settings.gen_batch_size || 6;
+
+        for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+          const batch = toInsert.slice(i, i + BATCH_SIZE);
+          const dynamicApiDelay = parseInt($('#vectors_api_delay').val() || '0') || 0;
+          progressText.text(`${i + batch.length}/${toInsert.length} (延时: ${dynamicApiDelay}ms)`);
+          progressBar.val(((i + batch.length) / toInsert.length) * 100);
+          
+          await storageAdapter.insertVectorItems(collectionId, batch, null, { taskId: `rt_${chatId}` });
+          batch.forEach(item => remoteUidSet.add(item.metadata.uid));
+
+          // 实时将写入进度同步到面板 UI 中，实现动态百分比滚动和精确对应的数目对齐
+          const currentSyncedCount = remoteUidSet.size + i + batch.length;
+          if (currentRtTaskIndex !== -1 && settings.vector_tasks[chatId][currentRtTaskIndex]) {
+            settings.vector_tasks[chatId][currentRtTaskIndex].itemCount = currentSyncedCount;
+            settings.vector_tasks[chatId][currentRtTaskIndex].timestamp = Date.now();
+            saveSettingsDebounced();
+            updateRealtimeDashboard();
+          }
+
+          if (dynamicApiDelay > 0 && i + BATCH_SIZE < toInsert.length) {
+              await new Promise(r => setTimeout(r, dynamicApiDelay));
+          }
+        }
+      }
+      
+      console.log(`[Vectors Realtime] Sync completed.`);
+      if (toInsert.length > 0) {
+        window.vectors_rt_last_synced_index = Math.max(...toInsert.map(item => item.metadata.index));
+      }
+      
+      if (manualTrigger) {
+        toastr.success('专属记忆库同步已完成！');
+      }
+      setTimeout(() => progressDiv.fadeOut(), 2000);
+    } else {
+      window.vectors_rt_last_synced_index = chat.length > 0 ? chat.length - 1 : 0;
+      if (manualTrigger) {
+        toastr.success('专属记忆库已是最新状态，无需同步。');
+      }
+    }
+
+    // --- 注册专属库到任务面板 ---
+    if (!settings.vector_tasks) settings.vector_tasks = {};
+    if (!settings.vector_tasks[chatId]) settings.vector_tasks[chatId] = [];
+    const finalItemCount = remoteUidSet.size + toInsert.length - toDelete.length;
+    
+    // 如果最终库里有东西，就在任务列表中注册/更新它
+    if (finalItemCount > 0) {
+      const rtTaskIndex = settings.vector_tasks[chatId].findIndex(t => t.taskId === collectionId);
+      if (rtTaskIndex === -1) {
+        settings.vector_tasks[chatId].push({
+          taskId: collectionId,
+          name: '[专属实时记忆库]',
+          timestamp: Date.now(),
+          enabled: true,
+          itemCount: finalItemCount,
+          originalItemCount: chat.length,
+          isRealtime: true, // 用于后续 UI 识别
+          startIndex: startIndex
+        });
+      } else {
+        settings.vector_tasks[chatId][rtTaskIndex].itemCount = finalItemCount;
+        settings.vector_tasks[chatId][rtTaskIndex].originalItemCount = chat.length;
+        settings.vector_tasks[chatId][rtTaskIndex].timestamp = Date.now();
+        settings.vector_tasks[chatId][rtTaskIndex].startIndex = startIndex;
+      }
+      saveSettingsDebounced();
+      if (typeof updateTaskList === 'function') {
+         updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
+      }
+    }
+
+    // === 触发层级引擎实时同步 (第四轨后台流水线) ===
+    if (settings.realtime_sync_enabled && (settings.ve_hierarchical_floor_enabled || settings.ve_hierarchical_date_enabled)) {
+      syncHierarchicalMemory(chatId, chat).catch(err => console.error('[Hierarchical] Sync error:', err));
+    }
+
+  } catch (err) {
+    console.error("[Vectors Realtime] Sync failed:", err);
+  } finally {
+    rtSyncLocks.delete(chatId);
+    updateRealtimeDashboard();
+    
+    if (rtSyncFollowUps.has(chatId)) {
+      rtSyncFollowUps.delete(chatId);
+      setTimeout(() => syncChatVectors(), 1000);
+    }
+  }
+}
+
+// ==========================================================
+
 // Event handlers
 const onChatEvent = debounce(async () => {
   // Update UI lists when chat changes
   await updateFileList();
   updateChatSettings();
   await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
+  
+  // 更新 dashboard 状态（以防它只是被删除了）
+  updateRealtimeDashboard();
+
+  // 触发实时同步
+  await syncChatVectors();
 }, debounce_timeout.relaxed);
 
 /**
@@ -3045,31 +3629,48 @@ const onChatEvent = debounce(async () => {
 async function cleanupOrphanedExternalTasks(deletedChatId) {
   console.log(`Vectors: Cleaning up orphaned external tasks for deleted chat: ${deletedChatId}`);
 
+  let totalRemoved = 0;
+
   // 扫描所有聊天的外挂任务
   for (const [chatId, tasks] of Object.entries(settings.vector_tasks)) {
     if (!tasks || !Array.isArray(tasks)) continue;
 
-    // 查找所有引用了被删除聊天的外挂任务
-    let foundOrphaned = false;
-    tasks.forEach(task => {
+    // === 修改：直接删除引用了被删除聊天的外挂任务 ===
+    const beforeCount = tasks.length;
+    const filtered = tasks.filter(task => {
       if (task.type === "external") {
-        // 检查是否引用了被删除的聊天
-        if (task.sourceChat === deletedChatId || (task.source && task.source.startsWith(`${deletedChatId}_`))) {
-          // 标记为孤儿任务
-          task.orphaned = true;
-          task.enabled = false; // 自动禁用
-          foundOrphaned = true;
-          console.log(`Vectors: Marked external task "${task.name}" as orphaned in chat ${chatId}`);
+        const isOrphan = task.sourceChat === deletedChatId || (task.source && task.source.startsWith(`${deletedChatId}_`));
+        if (isOrphan) {
+          console.log(`Vectors: Removing orphaned external task "${task.name}" from chat ${chatId}`);
         }
+        return !isOrphan;
       }
+      return true;
     });
 
-    if (foundOrphaned) {
-      // 保存更改
-      Object.assign(extension_settings.vectors_enhanced, settings);
-      saveSettingsDebounced();
+    if (filtered.length !== beforeCount) {
+      settings.vector_tasks[chatId] = filtered;
+      totalRemoved += (beforeCount - filtered.length);
+      console.log(`Vectors: Removed ${beforeCount - filtered.length} orphaned external task(s) from chat ${chatId}`);
     }
+    // === 修改结束 ===
   }
+
+  if (totalRemoved > 0) {
+    Object.assign(extension_settings.vectors_enhanced, settings);
+    saveSettingsDebounced();
+  }
+
+  // 清理被删除聊天本身的 vector_tasks 记录
+  if (settings.vector_tasks[deletedChatId]) {
+    delete settings.vector_tasks[deletedChatId];
+    Object.assign(extension_settings.vectors_enhanced, settings);
+    saveSettingsDebounced();
+    console.log(`Vectors: Removed vector_tasks entry for deleted chat ${deletedChatId}`);
+  }
+
+  // 顺带清理所有已无任何有效本地任务的僵尸聊天键
+  cleanupDeadChatEntries();
 }
 
 /**
@@ -3096,6 +3697,144 @@ function cleanupInvalidChatIds() {
       delete settings.vector_tasks[key];
     });
     console.log('Vectors: Cleaned up invalid chat IDs from vector_tasks');
+  }
+}
+
+/**
+ * 检查一个聊天是否包含有效的本地任务（有实际向量数据的非外挂任务）
+ * @param {string} chatId - 聊天ID
+ * @returns {boolean}
+ */
+function hasValidLocalTasks(chatId) {
+  const tasks = settings.vector_tasks?.[chatId];
+  if (!tasks || !Array.isArray(tasks)) return false;
+  return tasks.some(t => t.type !== 'external' && t.itemCount > 0);
+}
+
+/**
+ * 迁移旧格式外挂任务：补全 sourceChat 和 sourceTaskId
+ */
+function migrateExternalTaskFields() {
+  if (!settings.vector_tasks) return;
+
+  let migratedCount = 0;
+  for (const [chatId, tasks] of Object.entries(settings.vector_tasks)) {
+    if (!Array.isArray(tasks)) continue;
+
+    for (const task of tasks) {
+      if (task.type === 'external' && task.source && (!task.sourceChat || !task.sourceTaskId)) {
+        // 从 source 字段解析：source 格式为 "chatId_task_timestamp_random"
+        // taskId 总是以 task_ 开头且包含数字时间戳，用正则从末尾可靠提取
+        const match = task.source.match(/^(.*)_(task_\d+_[a-zA-Z0-9]+)$/);
+        if (match) {
+          task.sourceChat = match[1];
+          task.sourceTaskId = match[2];
+          migratedCount++;
+        }
+      }
+    }
+  }
+
+  if (migratedCount > 0) {
+    console.log(`Vectors: Migrated ${migratedCount} old external task(s) to new format`);
+    Object.assign(extension_settings.vectors_enhanced, settings);
+    saveSettingsDebounced();
+  }
+}
+
+/**
+ * 清理已无任何有效本地任务的僵尸聊天键
+ */
+function cleanupDeadChatEntries() {
+  if (!settings.vector_tasks) return;
+
+  let removedCount = 0;
+  for (const chatId of Object.keys(settings.vector_tasks)) {
+    const tasks = settings.vector_tasks[chatId];
+    if (!Array.isArray(tasks)) continue;
+
+    // 保留有有效本地任务的聊天键
+    if (!hasValidLocalTasks(chatId)) {
+      // 如果该键下还有外挂任务，先检查这些外挂任务是否指向其他有效源
+      // 如果指向的源也无效，则一并清理
+      const validExternalTasks = tasks.filter(t => {
+        if (t.type !== 'external') return false;
+        return hasValidLocalTasks(t.sourceChat);
+      });
+
+      if (validExternalTasks.length === 0) {
+        delete settings.vector_tasks[chatId];
+        removedCount++;
+      } else if (validExternalTasks.length !== tasks.length) {
+        // 只保留有效的外挂任务
+        settings.vector_tasks[chatId] = validExternalTasks;
+        removedCount += (tasks.length - validExternalTasks.length);
+      }
+    }
+  }
+
+  if (removedCount > 0) {
+    console.log(`Vectors: Removed ${removedCount} dead chat entry/entries from vector_tasks`);
+    Object.assign(extension_settings.vectors_enhanced, settings);
+    saveSettingsDebounced();
+  }
+}
+
+/**
+ * 与后端同步任务列表：删除前端有记录但后端无数据的僵尸本地任务
+ * @returns {Promise<number>} 删除的僵尸任务数量
+ */
+async function syncWithBackendTasks() {
+  if (!storageAdapter) {
+    console.warn('Vectors: syncWithBackendTasks called before storageAdapter initialized');
+    return 0;
+  }
+
+  try {
+    const activeTaskIds = await storageAdapter.getActiveTasks();
+    if (activeTaskIds === null) {
+      console.log('Vectors: Backend unreachable, skipping sync');
+      return 0;
+    }
+
+    let removedCount = 0;
+    const allTasks = settings.vector_tasks || {};
+
+    for (const [chatId, tasks] of Object.entries(allTasks)) {
+      if (!Array.isArray(tasks)) continue;
+
+      const beforeCount = tasks.length;
+      const filtered = tasks.filter(task => {
+        // 只检查本地任务（外挂任务不在这里删除，由源有效性检查处理）
+        if (task.type === 'external') return true;
+        if (!activeTaskIds.has(task.taskId)) {
+          console.log(`Vectors Sync: Removing zombie local task "${task.name}" (${task.taskId}) from chat ${chatId} — not found in backend`);
+          return false;
+        }
+        return true;
+      });
+
+      if (filtered.length !== beforeCount) {
+        settings.vector_tasks[chatId] = filtered;
+        removedCount += (beforeCount - filtered.length);
+      }
+    }
+
+    if (removedCount > 0) {
+      Object.assign(extension_settings.vectors_enhanced, settings);
+      saveSettingsDebounced();
+      console.log(`Vectors: Sync complete. Removed ${removedCount} zombie local task(s).`);
+    } else {
+      console.log('Vectors: Sync complete. No zombie local tasks found.');
+    }
+
+    // 同步后顺带清理僵尸聊天键
+    cleanupDeadChatEntries();
+
+    return removedCount;
+  } catch (error) {
+    console.error('Vectors: syncWithBackendTasks failed:', error);
+    return 0;
   }
 }
 
@@ -3145,6 +3884,23 @@ function migrateTagSettings() {
   }
 }
 
+/**
+ * 初始化辅助函数：单个步骤失败只跳过该步骤，不中断整个初始化流程，
+ * 避免出现"设置 UI 半绑定、事件未注册"的配置不上状态。
+ */
+async function safeInit(name, fn) {
+  try {
+    await fn();
+    return true;
+  } catch (error) {
+    console.error(`Vectors Enhanced: ${name} 初始化失败 (已跳过):`, error);
+    if (typeof toastr !== 'undefined') {
+      toastr.warning(`ArcFess ${name} 初始化失败: ${error.message}，请刷新页面重试`);
+    }
+    return false;
+  }
+}
+
 jQuery(async () => {
   try {
     console.log('Vectors Enhanced: Starting initialization...');
@@ -3158,12 +3914,22 @@ jQuery(async () => {
 
     // 深度合并设置，确保所有必需的属性都存在
     deepMerge(settings, extension_settings[SETTINGS_KEY]);
+    extension_settings[SETTINGS_KEY] = settings;
+
+    // Setup global settings object on window if not exists
+    window.vectorsEnhancedSettings = settings;
 
   // 在设置加载后运行迁移
   migrateTagSettings();
 
   // 清理无效的聊天ID
   cleanupInvalidChatIds();
+
+  // 迁移旧格式外挂任务字段
+  migrateExternalTaskFields();
+
+  // 清理已无任何有效本地任务的僵尸聊天键
+  cleanupDeadChatEntries();
 
 
   // 确保 chat types 存在（处理旧版本兼容性）
@@ -3233,7 +3999,7 @@ jQuery(async () => {
       ];
     } else if (settings.template_presets.custom.length > 0) {
       // 如果用户有旧的自定义预设，保留前3个并确保ID正确
-      const existingCustom = settings.template_presets.custom.slice(0, 3);
+      const existingCustom = settings.template_presets.custom;
       const newCustom = [
         existingCustom[0] || { id: 'custom1', name: '自定义模板1', template: '', description: '用户自定义模板' },
         existingCustom[1] || { id: 'custom2', name: '自定义模板2', template: '', description: '用户自定义模板' },
@@ -3277,7 +4043,7 @@ jQuery(async () => {
 
   // 初始化 SettingsPanel
   console.log('Vectors Enhanced: Initializing SettingsPanel...');
-  await settingsPanel.init();
+  await safeInit('设置面板', async () => settingsPanel.init());
 
   // 设置全局SettingsPanel引用
   globalSettingsPanel = settingsPanel;
@@ -3344,9 +4110,9 @@ jQuery(async () => {
 
   // 初始化设置子组件
   console.log('Vectors Enhanced: Initializing settings sub-components...');
-  await vectorizationSettings.init();
-  await querySettings.init();
-  await contentSelectionSettings.init();
+  await safeInit('向量化设置', () => vectorizationSettings.init());
+  await safeInit('查询设置', () => querySettings.init());
+  await safeInit('内容选择设置', () => contentSelectionSettings.init());
 
   // 将子组件添加到 SettingsPanel
   settingsPanel.addSubComponent('vectorizationSettings', vectorizationSettings);
@@ -3388,13 +4154,13 @@ jQuery(async () => {
   globalProgressManager = progressManager;
   globalEventManager = eventManager;
 
-  // 创建存储适配器实例
+// 创建存储适配器实例
   console.log('Vectors Enhanced: Creating StorageAdapter...');
   storageAdapter = new StorageAdapter({
     getRequestHeaders,
     getVectorsRequestBody,
     throwIfSourceInvalid,
-    cachedVectors
+    cachedVectors // <--- 👈 必须确认这一行存在！否则 Adapter 拿不到缓存
   });
 
   // 创建向量化适配器实例
@@ -3446,7 +4212,8 @@ jQuery(async () => {
     eventSource,  // 添加eventSource
     event_types,   // 添加event_types
     callGenericPopup,  // 添加callGenericPopup
-    POPUP_TYPE    // 添加POPUP_TYPE
+    POPUP_TYPE,    // 添加POPUP_TYPE
+    updateRealtimeDashboard // 添加dashboard刷新
   });
 
   // TaskManager removed - using legacy format only
@@ -3515,21 +4282,28 @@ jQuery(async () => {
 
   // 初始化所有设置UI
   console.log('Vectors Enhanced: Initializing settings UI...');
-  await settingsManager.initialize();
+  await safeInit('设置UI', () => settingsManager.initialize());
   console.log('Vectors Enhanced: Settings UI initialized');
 
   // 保存全局引用
   globalSettingsManager = settingsManager;
 
   // 初始化列表和任务
-  await settingsManager.initializeLists();
-  await settingsManager.initializeTaskList();
+  await safeInit('列表刷新', () => settingsManager.initializeLists());
+  await safeInit('任务列表', () => settingsManager.initializeTaskList());
+
+  // 与后端同步任务列表：删除前端有记录但后端无数据的僵尸本地任务
+  const syncedRemoved = await syncWithBackendTasks();
+  if (syncedRemoved > 0) {
+    // 如果删除了僵尸任务，刷新任务列表UI
+    await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
+  }
 
   // 初始化标签规则UI
-  renderTagRulesUI();
+  await safeInit('标签规则UI', () => renderTagRulesUI());
 
   // 初始化隐藏消息信息
-  MessageUI.updateHiddenMessagesInfo();
+  await safeInit('隐藏消息信息', () => MessageUI.updateHiddenMessagesInfo());
 
   // Event listeners
   eventSource.on(event_types.MESSAGE_DELETED, onChatEvent);
@@ -3589,6 +4363,7 @@ jQuery(async () => {
 
   // 监听聊天重新加载事件，以便在使用 /hide 和 /unhide 命令后更新
   eventSource.on(event_types.CHAT_LOADED, async () => {
+    await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
     MessageUI.updateHiddenMessagesInfo();
   });
 
@@ -3629,8 +4404,7 @@ jQuery(async () => {
         return;
       }
 
-      // 保存当前设置的完整备份
-      const originalSettings = JSON.parse(JSON.stringify(settings));
+      // 保存当前选择的完整备份
       const originalSelectedContent = JSON.parse(JSON.stringify(settings.selected_content));
 
       // 清空所有选择，然后只选中指定的世界书条目
@@ -3791,8 +4565,8 @@ jQuery(async () => {
       console.error('[Vectors] 向量化总结失败:', error);
       toastr.error('向量化总结失败: ' + error.message);
       // 确保恢复原始设置
-      if (originalSettings) {
-        settings.selected_content = originalSettings.selected_content;
+      if (originalSelectedContent) {
+        settings.selected_content = originalSelectedContent;
         saveSettingsDebounced();
       }
     }
@@ -3878,6 +4652,102 @@ jQuery(async () => {
     } catch (error) {
       console.error('创建导入任务失败:', error);
       toastr.error('创建导入任务失败: ' + error.message);
+    }
+  });
+
+  // === 新增：清理无效任务按钮的事件处理器 ===
+  $(document).on('click', '#vectors_enhanced_cleanup_invalid_tasks', async (e) => {
+    e.preventDefault();
+    console.log('清理无效任务按钮被点击');
+
+    try {
+      let totalRemoved = 0;
+
+      // === 步骤1：与后端同步，删除前端有记录但后端无数据的本地僵尸任务 ===
+      const backendRemoved = await syncWithBackendTasks();
+      totalRemoved += backendRemoved;
+
+      // === 步骤2：扫描外挂任务，检查源是否仍然有效 ===
+      const allTasks = settings.vector_tasks || {};
+      for (const [chatId, tasks] of Object.entries(allTasks)) {
+        if (!tasks || !Array.isArray(tasks)) continue;
+
+        const beforeCount = tasks.length;
+        const filtered = tasks.filter(task => {
+          if (task.type !== 'external') return true;
+
+          // 使用 hasValidLocalTasks 判断源聊天是否真正有效
+          const sourceChatValid = hasValidLocalTasks(task.sourceChat);
+          const sourceTaskExists = sourceChatValid && allTasks[task.sourceChat]?.some(t => t.taskId === task.sourceTaskId);
+
+          if (!sourceChatValid || !sourceTaskExists) {
+            console.log(`Vectors Cleanup: Removing invalid external task "${task.name}" from chat ${chatId} (sourceChatValid=${sourceChatValid}, sourceTaskExists=${sourceTaskExists})`);
+            return false;
+          }
+          return true;
+        });
+
+        if (filtered.length !== beforeCount) {
+          settings.vector_tasks[chatId] = filtered;
+          totalRemoved += (beforeCount - filtered.length);
+        }
+      }
+
+      // 步骤3：顺带删除已无任何有效本地任务的僵尸聊天键
+      cleanupDeadChatEntries();
+
+      if (totalRemoved > 0) {
+        Object.assign(extension_settings.vectors_enhanced, settings);
+        saveSettingsDebounced();
+        toastr.success(`已清理 ${totalRemoved} 个无效任务（含 ${backendRemoved} 个后端僵尸任务）`);
+        // 刷新任务列表
+        await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
+      } else {
+        toastr.info('没有发现无效任务');
+      }
+    } catch (error) {
+      console.error('清理无效任务失败:', error);
+      toastr.error('清理无效任务失败: ' + error.message);
+    }
+  });
+  // === 新增结束 ===
+
+  // 绑定专属实时库的 UI 手动控制按钮 (使用事件委托，防止 DOM 动态加载导致绑定失效)
+  $(document).on('click', '#vectors_enhanced_realtime_build', async (e) => {
+    e.preventDefault();
+    if (!settings.realtime_sync_enabled) {
+      toastr.warning('请先开启上方的 [启用实时记忆同步] 开关');
+      return;
+    }
+    await syncChatVectors(true); // 强制弹窗确认
+  });
+
+  $(document).on('click', '#vectors_enhanced_realtime_legacy_purge', async (e) => {
+    e.preventDefault();
+    const context = getContext();
+    if (!context || !context.chatId) return;
+    const confirm = await callGenericPopup('确定要清空并删除当前会话的【旧版】实时对话向量库（rt_*）吗？该操作不可逆，将彻底解决以前遗留的破库问题。', POPUP_TYPE.CONFIRM);
+    if (confirm === POPUP_RESULT.AFFIRMATIVE) {
+      const collectionId = `rt_${context.chatId}`;
+      try {
+        await storageAdapter.purgeVectorIndex(collectionId);
+        // 从任务列表中剥离
+        if (settings.vector_tasks[context.chatId]) {
+          settings.vector_tasks[context.chatId] = settings.vector_tasks[context.chatId].filter(t => t.taskId !== collectionId);
+          saveSettingsDebounced();
+          await updateTaskList(getChatTasks, renameVectorTask, removeVectorTask);
+        }
+        
+        // 斩草除根：清理幽灵缓存，防止幻觉
+        if (window.vectors_rt_cache) {
+          window.vectors_rt_cache.delete(collectionId);
+        }
+        
+        toastr.success('旧版专属实时库清理成功！');
+        updateRealtimeDashboard(); // 刷新 UI 状态
+      } catch (err) {
+        toastr.error('清空失败: ' + err.message);
+      }
     }
   });
 
@@ -4056,7 +4926,7 @@ jQuery(async () => {
   );
 
   // 初始化隐藏消息信息显示
-  MessageUI.updateHiddenMessagesInfo();
+  await safeInit('隐藏消息信息显示', () => MessageUI.updateHiddenMessagesInfo());
 
 
 
@@ -4316,4 +5186,1060 @@ async function toggleMessageRangeVisibility(startIndex, endIndex, hide) {
     toastr.error('操作失败');
   }
 }
+
+// =========================================================================
+// ArcFess 层级记忆引擎 (Hierarchical Engine) 核心实现
+// =========================================================================
+
+function getCurrentDateString() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+async function callLlmAPI(prompt, apiType, apiUrl, apiKey, apiModel, systemPrompt = '') {
+  if (apiType === 'main') {
+    if (typeof generateRaw === 'function') {
+      try {
+        console.log(`[Hierarchical] Calling SillyTavern main model with prompt length: ${prompt.length}`);
+        const response = await generateRaw({
+          prompt: prompt,
+          systemPrompt: systemPrompt
+        });
+        return response ? response.trim() : '';
+      } catch (err) {
+        console.error('[Hierarchical] generateRaw failed:', err);
+        throw err;
+      }
+    } else {
+      throw new Error('SillyTavern generateRaw function not found');
+    }
+  } else {
+    const proxyUrl = `http://${window.location.hostname}:8999/thought_proxy`;
+    const messages = [];
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    const response = await fetch(proxyUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: apiUrl,
+        api_key: apiKey,
+        auth_type: 'bearer',
+        model: apiModel,
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        timeout: 90,
+        verify_ssl: false
+      })
+    });
+
+    if (!response.ok) throw new Error(`API Error: HTTP ${response.status}`);
+    const data = await response.json();
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      return data.choices[0].message.content.trim();
+    }
+    throw new Error('Malformed API response');
+  }
+}
+
+// 缓存上一次处理的日期，以防消息轮询重复触发
+let lastProcessedDate = '';
+
+async function syncHierarchicalMemory(chatId, chat) {
+  if (!settings.realtime_sync_enabled) return;
+  const floorEnabled = settings.ve_hierarchical_floor_enabled;
+  const dateEnabled = settings.ve_hierarchical_date_enabled;
+  if (!floorEnabled && !dateEnabled) return;
+
+  const dummyVector = Array(storageAdapter.embeddingDim || 1024).fill(0);
+
+  // === 1. 楼层轨同步 ===
+  if (floorEnabled) {
+    const colId = `rt_hier_floor_${chatId}`;
+    const dbMemories = await storageAdapter.getCollectionMemories(colId);
+    
+    const rawMsgs = dbMemories.filter(m => m.metadata && m.metadata.level === 0);
+    const lastRawIndex = rawMsgs.length > 0 ? Math.max(...rawMsgs.map(m => m.metadata.index)) : -1;
+    
+    const toInsert = [];
+    chat.forEach((msg, index) => {
+      if (index <= lastRawIndex) return;
+      if (index === chat.length - 1 && !msg.is_user && !msg.is_system) return; // Swipe Immunity
+      if (!msg.mes || !msg.mes.trim()) return;
+      if (msg.is_user && !settings.realtime_sync_user) return;
+      if (!msg.is_user && !msg.is_system && !settings.realtime_sync_assistant) return;
+      if (msg.is_system && !settings.realtime_sync_hidden) return;
+      
+      const roleName = msg.name || (msg.is_user ? 'User' : 'Character');
+      const text = `[楼层 #${index}] [${roleName}]: ${msg.mes}`;
+      const uid = `${chatId}_floor_raw_${index}`;
+      
+      toInsert.push({
+        text: text,
+        metadata: { uid, index, level: 0, parent_small_id: null }
+      });
+    });
+    
+    if (toInsert.length > 0) {
+      console.log(`[Hierarchical] Inserting ${toInsert.length} raw messages to ${colId}`);
+      const BATCH_SIZE = settings.gen_batch_size || 6;
+      for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+        const batch = toInsert.slice(i, i + BATCH_SIZE);
+        await storageAdapter.insertVectorItems(colId, batch, null, { taskId: colId });
+      }
+      dbMemories.push(...toInsert.map(item => ({
+        id: item.metadata.uid,
+        text: item.text,
+        metadata: item.metadata
+      })));
+    }
+    
+    // 检查是否需要触发小结 (每 30 楼)
+    const floorTrigger = settings.ve_hierarchical_floor_trigger || 30;
+    const currentRawMsgs = dbMemories.filter(m => m.metadata && m.metadata.level === 0);
+    currentRawMsgs.sort((a, b) => a.metadata.index - b.metadata.index);
+    
+    const unsummarizedRaw = currentRawMsgs.filter(m => !m.metadata.parent_small_id);
+    
+    if (unsummarizedRaw.length >= floorTrigger) {
+      if (typeof toastr !== 'undefined') toastr.info('🧱 ArcFess: 正在静默生成楼层小总结...', 'Hierarchical Engine');
+      const batchToSummarize = unsummarizedRaw.slice(0, floorTrigger);
+      const textToSummarize = batchToSummarize.map(m => m.text).join('\n');
+      
+      const startIndex = batchToSummarize[0].metadata.index;
+      const endIndex = batchToSummarize[batchToSummarize.length - 1].metadata.index;
+      const scopeTag = `[第${startIndex}层-第${endIndex}层]`;
+      
+      const prompt = `请为以下对话记录生成一段剧情小结。总结要求：${settings.ve_hierarchical_prompt}\n\n对话记录：\n${textToSummarize}`;
+      
+      try {
+        const summaryText = await callLlmAPI(
+          prompt,
+          settings.ve_summary_api_type,
+          settings.ve_summary_api_url,
+          settings.ve_summary_api_key,
+          settings.ve_summary_api_model,
+          "你是一个小说剧情总结助手。"
+        );
+        
+        if (summaryText) {
+          const smallSummaryId = `${chatId}_floor_small_${startIndex}_${endIndex}`;
+          const finalSummaryText = `${scopeTag} ${summaryText}`;
+          
+          const summaryItem = {
+            id: smallSummaryId,
+            text: finalSummaryText,
+            metadata: {
+              level: 1,
+              node_id: smallSummaryId,
+              scope_tag: scopeTag,
+              parent_big_id: null,
+              message_count: batchToSummarize.length,
+              timestamp: Date.now()
+            },
+            vector: dummyVector,
+            collection_id: colId
+          };
+          
+          await storageAdapter.insert(summaryItem);
+          
+          // 更新原文的 parent_small_id 关联（由于新增了 updateMetadata 接口，这里不需要覆盖向量！）
+          for (const msg of batchToSummarize) {
+            await storageAdapter.updateMetadata(msg.id, { parent_small_id: smallSummaryId });
+          }
+          console.log(`[Hierarchical] Floor small summary created: ${smallSummaryId}`);
+          
+          // 触发大总结检测
+          await checkAndCreateBigSummary(chatId, colId, dbMemories, dummyVector);
+        }
+      } catch (err) {
+        console.error('[Hierarchical] Floor summary failed:', err);
+      }
+    }
+  }
+
+  // === 2. 日期轨同步 ===
+  if (dateEnabled) {
+    const colId = `rt_hier_date_${chatId}`;
+    const dbMemories = await storageAdapter.getCollectionMemories(colId);
+    
+    const rawMsgs = dbMemories.filter(m => m.metadata && m.metadata.level === 0);
+    const lastRawIndex = rawMsgs.length > 0 ? Math.max(...rawMsgs.map(m => m.metadata.index)) : -1;
+    
+    const toInsert = [];
+    const dateRegex = new RegExp(settings.ve_hierarchical_date_tag || "<ArcTime:\\s*(.*?)\\s*>");
+    
+    chat.forEach((msg, index) => {
+      if (index <= lastRawIndex) return;
+      if (index === chat.length - 1 && !msg.is_user && !msg.is_system) return;
+      if (!msg.mes || !msg.mes.trim()) return;
+      if (msg.is_user && !settings.realtime_sync_user) return;
+      if (!msg.is_user && !msg.is_system && !settings.realtime_sync_assistant) return;
+      if (msg.is_system && !settings.realtime_sync_hidden) return;
+      
+      const match = msg.mes.match(dateRegex);
+      const dateVal = match ? match[1].trim() : '';
+      
+      const roleName = msg.name || (msg.is_user ? 'User' : 'Character');
+      const text = `[日期: ${dateVal || '未知'}] [${roleName}]: ${msg.mes}`;
+      const uid = `${chatId}_date_raw_${index}`;
+      
+      toInsert.push({
+        text: text,
+        metadata: { uid, index, level: 0, date_val: dateVal, parent_small_id: null }
+      });
+    });
+    
+    if (toInsert.length > 0) {
+      console.log(`[Hierarchical] Inserting ${toInsert.length} raw messages to ${colId}`);
+      const BATCH_SIZE = settings.gen_batch_size || 6;
+      for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
+        const batch = toInsert.slice(i, i + BATCH_SIZE);
+        await storageAdapter.insertVectorItems(colId, batch, null, { taskId: colId });
+      }
+      dbMemories.push(...toInsert.map(item => ({
+        id: item.metadata.uid,
+        text: item.text,
+        metadata: item.metadata
+      })));
+    }
+    
+    // 检查日期变更并触发小结
+    const currentRawMsgs = dbMemories.filter(m => m.metadata && m.metadata.level === 0);
+    currentRawMsgs.sort((a, b) => a.metadata.index - b.metadata.index);
+    
+    if (currentRawMsgs.length > 0) {
+      const lastMsg = currentRawMsgs[currentRawMsgs.length - 1];
+      const newDate = lastMsg.metadata.date_val;
+      
+      if (newDate && lastProcessedDate && newDate !== lastProcessedDate) {
+        const targetDateToSummarize = lastProcessedDate;
+        const targetMsgs = currentRawMsgs.filter(m => m.metadata.date_val === targetDateToSummarize && !m.metadata.parent_small_id);
+        
+        if (targetMsgs.length > 0) {
+          if (typeof toastr !== 'undefined') toastr.info(`📅 ArcFess: 日期变更 (${targetDateToSummarize} -> ${newDate})，正在生成小结...`, 'Hierarchical Engine');
+          const textToSummarize = targetMsgs.map(m => m.text).join('\n');
+          const scopeTag = `[${targetDateToSummarize}]`;
+          const prompt = `请为以下对话记录生成一段剧情小结。总结要求：${settings.ve_hierarchical_prompt}\n\n对话记录：\n${textToSummarize}`;
+          
+          try {
+            const summaryText = await callLlmAPI(
+              prompt,
+              settings.ve_summary_api_type,
+              settings.ve_summary_api_url,
+              settings.ve_summary_api_key,
+              settings.ve_summary_api_model,
+              "你是一个小说剧情总结助手。"
+            );
+            
+            if (summaryText) {
+              const smallSummaryId = `${chatId}_date_small_${targetDateToSummarize.replace(/-/g, '_')}`;
+              const finalSummaryText = `${scopeTag} ${summaryText}`;
+              
+              const summaryItem = {
+                id: smallSummaryId,
+                text: finalSummaryText,
+                metadata: {
+                  level: 1,
+                  node_id: smallSummaryId,
+                  scope_tag: scopeTag,
+                  parent_big_id: null,
+                  message_count: targetMsgs.length,
+                  timestamp: Date.now()
+                },
+                vector: dummyVector,
+                collection_id: colId
+              };
+              
+              await storageAdapter.insert(summaryItem);
+              
+              for (const msg of targetMsgs) {
+                await storageAdapter.updateMetadata(msg.id, { parent_small_id: smallSummaryId });
+              }
+              console.log(`[Hierarchical] Date small summary created: ${smallSummaryId}`);
+              
+              await checkAndCreateBigSummary(chatId, colId, dbMemories, dummyVector);
+            }
+          } catch (err) {
+            console.error('[Hierarchical] Date summary failed:', err);
+          }
+        }
+      }
+      
+      if (newDate) {
+        lastProcessedDate = newDate;
+      }
+    }
+  }
+}
+
+async function checkAndCreateBigSummary(chatId, colId, dbMemories, dummyVector) {
+  const latestMemories = await storageAdapter.getCollectionMemories(colId);
+  const smallSummaries = latestMemories.filter(m => m.metadata && m.metadata.level === 1);
+  smallSummaries.sort((a, b) => a.timestamp - b.timestamp);
+  
+  const unsummarizedSmall = smallSummaries.filter(m => !m.metadata.parent_big_id);
+  const bigTrigger = settings.ve_hierarchical_big_trigger || 4;
+  
+  if (unsummarizedSmall.length >= bigTrigger) {
+    if (typeof toastr !== 'undefined') toastr.info('📚 ArcFess: 正在打包生成阶段性大总结...', 'Hierarchical Engine');
+    const batchToSummarize = unsummarizedSmall.slice(0, bigTrigger);
+    const textToSummarize = batchToSummarize.map(m => m.text).join('\n');
+    
+    const startTag = batchToSummarize[0].metadata.scope_tag;
+    const endTag = batchToSummarize[batchToSummarize.length - 1].metadata.scope_tag;
+    const scopeTag = `${startTag.replace(/[\[\]]/g, '')} ~ ${endTag.replace(/[\[\]]/g, '')}`;
+    
+    const prompt = `请根据以下小结，归纳提炼出这段剧情的章节大纲。大纲要求：${settings.ve_hierarchical_big_prompt}\n\n剧情小结列表：\n${textToSummarize}`;
+    
+    try {
+      const bigSummaryText = await callLlmAPI(
+        prompt,
+        settings.ve_summary_api_type,
+        settings.ve_summary_api_url,
+        settings.ve_summary_api_key,
+        settings.ve_summary_api_model,
+        "你是一个章节大纲总结大师。"
+      );
+      
+      if (bigSummaryText) {
+        const bigSummaryId = `${chatId}_big_${Date.now()}`;
+        const finalBigText = `[大纲: ${scopeTag}] ${bigSummaryText}`;
+        
+        const bigItem = {
+          id: bigSummaryId,
+          text: finalBigText,
+          metadata: {
+            level: 2,
+            node_id: bigSummaryId,
+            scope_tag: scopeTag,
+            timestamp: Date.now()
+          },
+          vector: dummyVector,
+          collection_id: colId
+        };
+        
+        await storageAdapter.insert(bigItem);
+        
+        for (const small of batchToSummarize) {
+          await storageAdapter.updateMetadata(small.id, { parent_big_id: bigSummaryId });
+        }
+        console.log(`[Hierarchical] Big summary created: ${bigSummaryId}`);
+      }
+    } catch (err) {
+      console.error('[Hierarchical] Big summary failed:', err);
+    }
+  }
+}
+
+// Helper to parse JSON arrays from LLM responses robustly
+function parseJsonArray(text) {
+  if (!text) return null;
+  const start = text.indexOf('[');
+  const end = text.lastIndexOf(']');
+  if (start !== -1 && end !== -1 && end >= start) {
+    const jsonStr = text.substring(start, end + 1);
+    try {
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      let repaired = jsonStr
+        .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '$1')
+        .replace(/,\s*([\]}])/g, '$1');
+      try {
+        return JSON.parse(repaired);
+      } catch (innerErr) {
+        console.warn('[Hierarchical] Failed to parse and repair JSON:', innerErr, 'Original text:', text);
+      }
+    }
+  }
+  return null;
+}
+
+async function fetchHierarchicalMemory(chatId, queryText) {
+  const floorEnabled = settings.ve_hierarchical_floor_enabled;
+  const dateEnabled = settings.ve_hierarchical_date_enabled;
+  
+  const cols = [];
+  if (floorEnabled) cols.push(`rt_hier_floor_${chatId}`);
+  if (dateEnabled) cols.push(`rt_hier_date_${chatId}`);
+  
+  try {
+    let allMemories = [];
+    for (const col of cols) {
+      const mems = await storageAdapter.getCollectionMemories(col);
+      allMemories.push(...mems);
+    }
+    
+    const bigSummaries = allMemories.filter(m => m.metadata && m.metadata.level === 2);
+    const smallSummaries = allMemories.filter(m => m.metadata && m.metadata.level === 1);
+    
+    if (bigSummaries.length === 0 && smallSummaries.length === 0) {
+      return '';
+    }
+    
+    bigSummaries.sort((a, b) => a.timestamp - b.timestamp);
+    smallSummaries.sort((a, b) => a.timestamp - b.timestamp);
+    
+    const recentInjectCount = settings.ve_hierarchical_inject_count || 5;
+    const recentSmalls = smallSummaries.slice(-recentInjectCount);
+    
+    // ── 第一轮下钻决策：总管分析大结目录 ──
+    if (typeof toastr !== 'undefined') toastr.info('🧠 总管AI: 正在分析记忆大纲...', 'Hierarchical Engine');
+    
+    const r1Map = new Map();
+    const bigCatalog = bigSummaries.map((b, i) => {
+      const shortId = `B${i+1}`;
+      r1Map.set(shortId, b);
+      r1Map.set(b.id, b);
+      r1Map.set(String(i+1), b);
+      return `${i+1}. [大结ID: ${shortId}] ${b.text}`;
+    }).join('\n');
+    
+    const recentCatalog = recentSmalls.map((s, i) => {
+      const shortId = `S${i+1}`;
+      r1Map.set(shortId, s);
+      r1Map.set(s.id, s);
+      r1Map.set(String(i+1), s);
+      return `${i+1}. [近期小结ID: ${shortId}] ${s.text}`;
+    }).join('\n');
+    
+    const r1Prompt = `历史故事大纲目录：\n${bigCatalog || '无'}\n\n近期发生小结（不可下钻）：\n${recentCatalog || '无'}\n\n当前情境：\n${queryText}\n\n请决定需要下钻哪一个大结，返回对应的 JSON 数组。`;
+    
+    const r1Result = await callLlmAPI(
+      r1Prompt,
+      settings.ve_manager_api_type,
+      settings.ve_manager_api_url,
+      settings.ve_manager_api_key,
+      settings.ve_manager_api_model,
+      settings.ve_hierarchical_manager_prompt_r1
+    );
+    
+    console.log('[Hierarchical] R1 Decision:', r1Result);
+    
+    const decisions = parseJsonArray(r1Result);
+    
+    if (!decisions || decisions.length === 0) {
+      return '';
+    }
+    
+    const findR1Target = (targetVal) => {
+      if (!targetVal) return null;
+      let cleanVal = String(targetVal).trim();
+      
+      const idMatch = cleanVal.match(/(?:ID|名称)?:\s*([BS]\d+|\d+)/i) || cleanVal.match(/([BS]\d+)/i);
+      if (idMatch) {
+        cleanVal = idMatch[1];
+      }
+      
+      if (r1Map.has(cleanVal)) return r1Map.get(cleanVal);
+      
+      for (const [key, value] of r1Map.entries()) {
+        if (key.toLowerCase() === cleanVal.toLowerCase()) return value;
+      }
+      
+      for (const b of bigSummaries) {
+        if (b.id.includes(cleanVal) || cleanVal.includes(b.id)) return b;
+      }
+      for (const s of smallSummaries) {
+        if (s.id.includes(cleanVal) || cleanVal.includes(s.id)) return s;
+      }
+      
+      const lowerVal = cleanVal.toLowerCase();
+      for (const b of bigSummaries) {
+        const lowerText = b.text.toLowerCase();
+        if (lowerText.includes(lowerVal) || lowerVal.includes(lowerText)) return b;
+      }
+      for (const s of smallSummaries) {
+        const lowerText = s.text.toLowerCase();
+        if (lowerText.includes(lowerVal) || lowerVal.includes(lowerText)) return s;
+      }
+      return null;
+    };
+    
+    let targetSmallSummaries = [];
+    let selectedSmallIds = new Set();
+    
+    for (const dec of decisions) {
+      const resolvedNode = findR1Target(dec.target);
+      if (resolvedNode) {
+        if (resolvedNode.metadata && resolvedNode.metadata.level === 1) {
+          selectedSmallIds.add(resolvedNode.id);
+        } else if (resolvedNode.metadata && resolvedNode.metadata.level === 2) {
+          const children = smallSummaries.filter(s => s.metadata.parent_big_id === resolvedNode.id);
+          targetSmallSummaries.push(...children);
+        }
+      }
+    }
+    
+    // ── 第二轮下钻决策：挑选细节小结与检索词 ──
+    let r2Decisions = [];
+    const r2Map = new Map();
+    
+    if (targetSmallSummaries.length > 0) {
+      if (typeof toastr !== 'undefined') toastr.info('🧠 总管AI: 锁定了大纲，正在下钻事件细节...', 'Hierarchical Engine');
+      
+      const smallCatalog = targetSmallSummaries.map((s, i) => {
+        const shortId = `S${i+1}`;
+        r2Map.set(shortId, s);
+        r2Map.set(s.id, s);
+        r2Map.set(String(i+1), s);
+        return `${i+1}. [小结ID: ${shortId}] ${s.text}`;
+      }).join('\n');
+      
+      const r2Prompt = `被锁定大总结辖区小结列表：\n${smallCatalog}\n\n当前情境：\n${queryText}\n\n请输出要进行向量检索的小总结 ID 与其具体的查询检索词 JSON 数组。`;
+      
+      const r2Result = await callLlmAPI(
+        r2Prompt,
+        settings.ve_manager_api_type,
+        settings.ve_manager_api_url,
+        settings.ve_manager_api_key,
+        settings.ve_manager_api_model,
+        settings.ve_hierarchical_manager_prompt_r2
+      );
+      
+      console.log('[Hierarchical] R2 Decision:', r2Result);
+      r2Decisions = parseJsonArray(r2Result) || [];
+    }
+    
+    const findR2Target = (targetVal) => {
+      if (!targetVal) return null;
+      let cleanVal = String(targetVal).trim();
+      
+      const idMatch = cleanVal.match(/(?:ID|名称)?:\s*([S]\d+|\d+)/i) || cleanVal.match(/([S]\d+)/i);
+      if (idMatch) {
+        cleanVal = idMatch[1];
+      }
+      
+      if (r2Map.has(cleanVal)) return r2Map.get(cleanVal);
+      
+      for (const [key, value] of r2Map.entries()) {
+        if (key.toLowerCase() === cleanVal.toLowerCase()) return value;
+      }
+      
+      for (const s of targetSmallSummaries) {
+        if (s.id.includes(cleanVal) || cleanVal.includes(s.id)) return s;
+      }
+      
+      const lowerVal = cleanVal.toLowerCase();
+      for (const s of targetSmallSummaries) {
+        const lowerText = s.text.toLowerCase();
+        if (lowerText.includes(lowerVal) || lowerVal.includes(lowerText)) return s;
+      }
+      return null;
+    };
+    
+    let resolvedR2Decisions = [];
+    for (const r2Dec of r2Decisions) {
+      const resolvedSmall = findR2Target(r2Dec.target);
+      if (resolvedSmall) {
+        resolvedR2Decisions.push({
+          target: resolvedSmall.id,
+          queries: r2Dec.queries || []
+        });
+      }
+    }
+    
+    // 补充第一轮直接锁定的小结，不指定特定 keywords 时默认以 queryText 为检索词
+    selectedSmallIds.forEach(id => {
+      if (!resolvedR2Decisions.some(d => d.target === id)) {
+        resolvedR2Decisions.push({ target: id, queries: [queryText] });
+      }
+    });
+
+    const searchTasks = [];
+    for (const r2Dec of resolvedR2Decisions) {
+      const smallId = r2Dec.target;
+      const queries = r2Dec.queries || [];
+      if (smallSummaries.some(s => s.id === smallId) && queries.length > 0) {
+        queries.forEach(q => {
+          searchTasks.push({ smallId, query: q });
+        });
+      }
+    }
+    
+    const retrievedRawChunks = [];
+    if (searchTasks.length > 0) {
+      if (typeof toastr !== 'undefined') toastr.info(`🧠 总管AI: 提取局部原文碎片中...`, 'Hierarchical Engine');
+      
+      const queryPromises = searchTasks.map(async (task) => {
+        try {
+          const vector = await getEmbeddingVector(task.query);
+          if (!vector) return [];
+          
+          const response = await fetch(`${storageAdapter.baseUrl}/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              vector: vector,
+              k: 3, // 每个小结下通常只需要取最相关的 3 句话
+              collections: cols,
+              filters: { parent_small_id: task.smallId }
+            })
+          });
+          if (response.ok) {
+            const resJson = await response.json();
+            return resJson.results || [];
+          }
+        } catch(err) {
+          console.error('[Hierarchical] Precise query failed:', err);
+        }
+        return [];
+      });
+      
+      const resultsArray = await Promise.all(queryPromises);
+      retrievedRawChunks.push(...resultsArray.flat());
+    }
+    
+    // 原话去重
+    const uniqueRaw = [];
+    const seenRawIds = new Set();
+    retrievedRawChunks.forEach(item => {
+      if (!seenRawIds.has(item.id)) {
+        seenRawIds.add(item.id);
+        uniqueRaw.push(item);
+      }
+    });
+    
+    if (uniqueRaw.length > 0) {
+      let outputText = '\n\n=== [ArcFess] 总管AI提取的历史精准剧情记忆 ===\n';
+      
+      const groupedBySmall = new Map();
+      uniqueRaw.forEach(item => {
+        const smallId = item.metadata?.parent_small_id;
+        if (smallId) {
+          if (!groupedBySmall.has(smallId)) groupedBySmall.set(smallId, []);
+          groupedBySmall.get(smallId).push(item);
+        }
+      });
+      
+      groupedBySmall.forEach((chunks, smallId) => {
+        const smallNode = smallSummaries.find(s => s.id === smallId);
+        if (smallNode) {
+          const bigId = smallNode.metadata?.parent_big_id;
+          const bigNode = bigSummaries.find(b => b.id === bigId);
+          
+          outputText += `【历史大纲】：${bigNode ? bigNode.text : '无分类大纲'}\n`;
+          outputText += `  —— 【关联事件总结】：${smallNode.text}\n`;
+          chunks.forEach(chunk => {
+            // 清理掉[楼层 #X]或[日期]的前缀展示，更自然地喂给LLM
+            let cleanText = chunk.text.replace(/^\[楼层\s*#\d+\]\s*/, '').replace(/^\[日期:\s*.*?\]\s*/, '');
+            outputText += `    ———— 【历史对话还原】：${cleanText}\n`;
+          });
+          outputText += '\n';
+        }
+      });
+      
+      return outputText;
+    }
+  } catch(err) {
+    console.error('[Hierarchical] fetchHierarchicalMemory failed:', err);
+  }
+  return '';
+}
+
+async function getEmbeddingVector(text) {
+  const config = storageAdapter.getVectorsRequestBody ? storageAdapter.getVectorsRequestBody() : {};
+  let vectors = [];
+  if (config.source === 'vllm' || config.source === 'openai') {
+    vectors = await storageAdapter._fetchOpenAIEmbeddings([text], config);
+  } else if (config.source === 'ollama') {
+    vectors = await storageAdapter._fetchOllamaEmbeddings([text], config);
+  }
+  return vectors.length > 0 ? vectors[0] : null;
+}
+
+// === 可视化层级记忆浏览器与编辑器 ===
+window.vectors_enhanced_showHierarchicalPreview = async function() {
+  const context = getContext();
+  if (!context || !context.chatId) {
+    toastr.warning('请先加载一个聊天存档');
+    return;
+  }
+
+  const chatId = context.chatId;
+  
+  if (typeof toastr !== 'undefined') toastr.info('正在读取层级记忆数据...', 'ArcFess Viewer');
+  
+  try {
+    const floorMems = await storageAdapter.getCollectionMemories(`rt_hier_floor_${chatId}`);
+    const dateMems = await storageAdapter.getCollectionMemories(`rt_hier_date_${chatId}`);
+    const allMems = [...floorMems, ...dateMems];
+    
+    if (allMems.length === 0) {
+      callGenericPopup(
+        '<div><strong>层级记忆库为空</strong><p>当前存档还没有生成任何层级总结。请在启用层级引擎后，进行更多聊天以生成记忆节点。</p></div>',
+        POPUP_TYPE.TEXT,
+        { okButton: '确认' }
+      );
+      return;
+    }
+    
+    // 构建 Modal HTML
+    const modalStyle = `
+      <style>
+        .ve-modal-container { display: flex; width: 100%; height: 500px; gap: 15px; color: var(--SmartThemeTextColor); }
+        .ve-tree-pane { flex: 1.2; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; background: var(--black30a); padding: 10px; overflow-y: auto; height: 100%; }
+        .ve-editor-pane { flex: 1; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; background: var(--black30a); padding: 15px; display: flex; flex-direction: column; gap: 10px; height: 100%; }
+        .ve-tree-item { margin-bottom: 6px; }
+        .ve-tree-header { display: flex; align-items: center; cursor: pointer; padding: 6px 10px; border-radius: 6px; background: var(--black10a); border: 1px dashed transparent; }
+        .ve-tree-header:hover { border-color: var(--SmartThemeQuoteColor); background: var(--black20a); }
+        .ve-tree-header.selected { background: var(--SmartThemeQuoteColor); color: #000; font-weight: bold; }
+        .ve-tree-children { margin-left: 20px; display: none; margin-top: 4px; }
+        .ve-tree-children.open { display: block; }
+        .ve-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--SmartThemeBorderColor); cursor: pointer; font-weight: bold; text-align: center; }
+        .ve-btn-primary { background: var(--SmartThemeQuoteColor); color: #000; border-color: var(--SmartThemeQuoteColor); }
+        .ve-btn-danger { background: var(--warning); color: #fff; border-color: var(--warning); }
+      </style>
+    `;
+    
+    const popupContent = `
+      ${modalStyle}
+      <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <h3>🔍 ArcFess 层级记忆浏览器与编辑器</h3>
+        <select id="ve_viewer_track_select" class="text_pole" style="width: 140px;">
+          <option value="floor">🧱 楼层轨道</option>
+          <option value="date">📅 日期轨道</option>
+        </select>
+      </div>
+      <div class="ve-modal-container">
+        <div class="ve-tree-pane" id="ve_viewer_tree">
+          <!-- 动态装填树 -->
+        </div>
+        <div class="ve-editor-pane" id="ve_viewer_editor">
+          <div style="text-align: center; color: var(--SmartThemeQuoteColor); margin-top: 150px;">
+            <i class="fa-solid fa-hand-pointer" style="font-size: 3rem; margin-bottom: 10px;"></i>
+            <p>请点击左侧节点浏览或修改总结内容</p>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // 打开ST modal
+    const dialog = callGenericPopup(popupContent, POPUP_TYPE.TEXT, { okButton: '关闭浏览器' });
+    
+    // 渲染函数
+    const renderTree = (trackType) => {
+      const colId = trackType === 'floor' ? `rt_hier_floor_${chatId}` : `rt_hier_date_${chatId}`;
+      const trackMems = trackType === 'floor' ? floorMems : dateMems;
+      
+      const treeContainer = $('#ve_viewer_tree');
+      treeContainer.empty();
+      
+      if (trackMems.length === 0) {
+        treeContainer.html('<div style="text-align:center;color:gray;margin-top:100px;">该轨道尚无记忆节点</div>');
+        return;
+      }
+      
+      const bigs = trackMems.filter(m => m.metadata && m.metadata.level === 2);
+      const smalls = trackMems.filter(m => m.metadata && m.metadata.level === 1);
+      const raws = trackMems.filter(m => m.metadata && m.metadata.level === 0);
+      
+      bigs.sort((a, b) => a.timestamp - b.timestamp);
+      smalls.sort((a, b) => a.timestamp - b.timestamp);
+      
+      // 树渲染
+      let treeHtml = '';
+      
+      // 1. 大结
+      bigs.forEach(b => {
+        const childSmalls = smalls.filter(s => s.metadata.parent_big_id === b.id);
+        treeHtml += `
+          <div class="ve-tree-item" data-id="${b.id}" data-type="big" data-col="${colId}">
+            <div class="ve-tree-header ve-big-header" data-id="${b.id}">
+              <i class="fa-solid fa-folder-closed" style="margin-right: 6px;"></i>
+              <span style="flex:1;">${b.text.slice(0, 40)}...</span>
+              <small style="color: gray;">[大总结]</small>
+            </div>
+            <div class="ve-tree-children" id="children_${b.id}">
+        `;
+        
+        childSmalls.forEach(s => {
+          const rawCount = raws.filter(r => r.metadata.parent_small_id === s.id).length;
+          treeHtml += `
+            <div class="ve-tree-item ve-tree-header ve-small-header" data-id="${s.id}" data-type="small" data-col="${colId}" style="margin-left: 20px;">
+              <i class="fa-solid fa-file-invoice" style="margin-right: 6px;"></i>
+              <span style="flex:1;">${s.text.slice(0, 30)}...</span>
+              <small style="color: var(--SmartThemeQuoteColor);">[小结] (${rawCount}条原话)</small>
+            </div>
+          `;
+        });
+        
+        treeHtml += `
+            </div>
+          </div>
+        `;
+      });
+      
+      // 孤儿小结 (还没有被打包成大结的)
+      const orphanSmalls = smalls.filter(s => !s.metadata.parent_big_id);
+      if (orphanSmalls.length > 0) {
+        treeHtml += `<h4 style="margin: 15px 0 5px 0; border-bottom: 1px solid var(--SmartThemeBorderColor); padding-bottom: 4px;">近期未归档小结</h4>`;
+        orphanSmalls.forEach(s => {
+          const rawCount = raws.filter(r => r.metadata.parent_small_id === s.id).length;
+          treeHtml += `
+            <div class="ve-tree-item ve-tree-header ve-small-header" data-id="${s.id}" data-type="small" data-col="${colId}">
+              <i class="fa-solid fa-file-invoice" style="margin-right: 6px;"></i>
+              <span style="flex:1;">${s.text.slice(0, 30)}...</span>
+              <small style="color: var(--SmartThemeQuoteColor);">[近期小结] (${rawCount}条原话)</small>
+            </div>
+          `;
+        });
+      }
+      
+      treeContainer.html(treeHtml);
+      
+      // 绑定点击展开/折叠大结
+      $('.ve-big-header').on('click', function(e) {
+        e.stopPropagation();
+        const id = $(this).attr('data-id');
+        $(`#children_${id}`).toggleClass('open');
+        $(this).find('i').toggleClass('fa-folder-closed fa-folder-open');
+        selectNode(id, 'big', colId, trackMems);
+      });
+      
+      // 绑定点击小结
+      $('.ve-small-header').on('click', function(e) {
+        e.stopPropagation();
+        const id = $(this).attr('data-id');
+        selectNode(id, 'small', colId, trackMems);
+      });
+    };
+    
+    // 选择并进入编辑
+    const selectNode = (id, type, colId, trackMems) => {
+      $('.ve-tree-header').removeClass('selected');
+      $(`.ve-tree-item[data-id="${id}"] > .ve-tree-header, .ve-tree-header[data-id="${id}"]`).addClass('selected');
+      
+      const node = trackMems.find(m => m.id === id);
+      if (!node) return;
+      
+      const editorPane = $('#ve_viewer_editor');
+      editorPane.empty().html(`
+        <div style="display:flex; flex-direction:column; gap:10px; height: 100%;">
+          <div>
+            <strong>节点类型:</strong> <span style="color: var(--SmartThemeQuoteColor); font-weight:bold;">${type === 'big' ? '📖 大总结 (Outline)' : '📄 小总结 (Summary)'}</span>
+          </div>
+          <div>
+            <strong>关联范围:</strong> <small style="color:gray;">${node.metadata?.scope_tag || '无范围标记'}</small>
+          </div>
+          <div style="flex:1; display:flex; flex-direction:column;">
+            <label for="ve_editor_textarea" style="font-weight:bold; margin-bottom:5px;">修改正文内容:</label>
+            <textarea id="ve_editor_textarea" class="text_pole" style="flex:1; width:100%; resize:none; padding:10px; font-size:14px; line-height:1.5;">${node.text}</textarea>
+          </div>
+          <div style="display:flex; gap:10px; justify-content: flex-end;">
+            <button id="ve_editor_delete" class="ve-btn ve-btn-danger"><i class="fa-solid fa-trash"></i> 删除节点</button>
+            <button id="ve_editor_save" class="ve-btn ve-btn-primary"><i class="fa-solid fa-floppy-disk"></i> 保存修改</button>
+          </div>
+        </div>
+      `);
+      
+      // 保存修改
+      $('#ve_editor_save').on('click', async () => {
+        const newText = $('#ve_editor_textarea').val();
+        if (!newText.trim()) {
+          toastr.warning('内容不能为空');
+          return;
+        }
+        
+        node.text = newText;
+        
+        const dummyVector = Array(storageAdapter.embeddingDim || 1024).fill(0);
+        const updatePayload = {
+          id: node.id,
+          text: newText,
+          metadata: node.metadata,
+          vector: dummyVector,
+          collection_id: colId
+        };
+        
+        try {
+          await storageAdapter.insert(updatePayload);
+          toastr.success('保存修改成功！');
+          renderTree($('#ve_viewer_track_select').val());
+          selectNode(id, type, colId, trackMems);
+        } catch(err) {
+          toastr.error('保存失败: ' + err.message);
+        }
+      });
+      
+      // 删除节点
+      $('#ve_editor_delete').on('click', async () => {
+        const confirmDelete = await callGenericPopup(
+          `<div><strong>确认删除节点?</strong><p>删除总结节点不会影响底层的原文对话，但会使这部分聊天记录在下钻时失去目录关联。是否继续？</p></div>`,
+          POPUP_TYPE.CONFIRM, { okButton: '确认删除', cancelButton: '取消' }
+        );
+        if (confirmDelete !== POPUP_RESULT.AFFIRMATIVE) return;
+        
+        try {
+          await storageAdapter.delete([node.id]);
+          toastr.success('删除成功');
+          // 从内存数组中剔除
+          const idx = trackMems.findIndex(m => m.id === id);
+          if (idx !== -1) trackMems.splice(idx, 1);
+          
+          renderTree($('#ve_viewer_track_select').val());
+          editorPane.empty().html(`
+            <div style="text-align: center; color: var(--SmartThemeQuoteColor); margin-top: 150px;">
+              <i class="fa-solid fa-hand-pointer" style="font-size: 3rem; margin-bottom: 10px;"></i>
+              <p>请点击左侧节点浏览或修改总结内容</p>
+            </div>
+          `);
+        } catch(err) {
+          toastr.error('删除失败: ' + err.message);
+        }
+      });
+    };
+    
+    // 初始化渲染 floor
+    renderTree('floor');
+    
+    // 切换轨道事件
+    $('#ve_viewer_track_select').on('change', function() {
+      renderTree($(this).val());
+      $('#ve_viewer_editor').html(`
+        <div style="text-align: center; color: var(--SmartThemeQuoteColor); margin-top: 150px;">
+          <i class="fa-solid fa-hand-pointer" style="font-size: 3rem; margin-bottom: 10px;"></i>
+          <p>请点击左侧节点浏览或修改总结内容</p>
+        </div>
+      `);
+    });
+    
+  } catch(err) {
+    console.error('[Hierarchical] Open preview failed:', err);
+    toastr.error('打不开浏览器，错误: ' + err.message);
+  }
+};
+
+// === 从其他会话克隆/继承层级记忆 ===
+window.vectors_enhanced_inheritHierarchicalMemory = async function() {
+  const context = getContext();
+  if (!context || !context.chatId) {
+    toastr.warning('请先加载当前会话存档');
+    return;
+  }
+  
+  const destChatId = context.chatId;
+  
+  try {
+    const res = await fetch(`http://${window.location.hostname}:8999/collections`);
+    if (!res.ok) throw new Error('无法连接到后端服务器');
+    const data = await res.json();
+    const collections = data.collections || [];
+    
+    // 找出所有前缀是 rt_hier_floor_ 的 collection，提取 chatId 作为可用源存档
+    const chats = new Set();
+    collections.forEach(col => {
+      if (col.name.startsWith('rt_hier_floor_')) {
+        const id = col.name.replace('rt_hier_floor_', '');
+        if (id !== destChatId) chats.add(id);
+      }
+    });
+    
+    if (chats.size === 0) {
+      callGenericPopup(
+        '<div><strong>没有发现可用的历史层级记忆库</strong><p>后端目前没有任何其他会话开启了层级记忆引擎，没有记忆数据可供克隆。</p></div>',
+        POPUP_TYPE.TEXT, { okButton: '确认' }
+      );
+      return;
+    }
+    
+    let optionsHtml = '';
+    chats.forEach(c => {
+      optionsHtml += `<option value="${c}">${c}</option>`;
+    });
+    
+    const popupContent = `
+      <div>
+        <strong>选择要克隆的源会话：</strong>
+        <select id="ve_inherit_source_select" class="text_pole" style="width: 100%; margin-top: 10px;">
+          ${optionsHtml}
+        </select>
+        <p style="margin-top:15px; color: var(--warning);"><small>警告：克隆会把源会话的所有大总结、小总结以及关联的原文向量完整复制并覆盖当前的层级记忆。这是一个不可逆的操作！</small></p>
+      </div>
+    `;
+    
+    const confirm = await callGenericPopup(popupContent, POPUP_TYPE.CONFIRM, { okButton: '开始继承/克隆', cancelButton: '取消' });
+    if (confirm !== POPUP_RESULT.AFFIRMATIVE) return;
+    
+    const sourceChatId = $('#ve_inherit_source_select').val();
+    if (!sourceChatId) return;
+    
+    if (typeof toastr !== 'undefined') toastr.info(`正在把 ${sourceChatId} 的记忆克隆到当前会话...`, 'ArcFess Clone');
+    
+    // 开始克隆楼层轨与日期轨
+    const tracks = ['floor', 'date'];
+    let clonedCount = 0;
+    
+    for (const track of tracks) {
+      const srcCol = `rt_hier_${track}_${sourceChatId}`;
+      const destCol = `rt_hier_${track}_${destChatId}`;
+      
+      const srcMemories = await storageAdapter.getCollectionMemories(srcCol);
+      if (srcMemories.length > 0) {
+        // 将每一条记忆修改为 destination 的 collection_id，并且更新 ID 中的 chatId 前缀以防冲突
+        const mappedMemories = srcMemories.map(m => {
+          const newId = m.id.replace(new RegExp(`^${sourceChatId}`), destChatId);
+          const newMeta = { ...m.metadata };
+          if (newMeta.uid) newMeta.uid = newMeta.uid.replace(new RegExp(`^${sourceChatId}`), destChatId);
+          if (newMeta.node_id) newMeta.node_id = newMeta.node_id.replace(new RegExp(`^${sourceChatId}`), destChatId);
+          if (newMeta.parent_small_id) newMeta.parent_small_id = newMeta.parent_small_id.replace(new RegExp(`^${sourceChatId}`), destChatId);
+          if (newMeta.parent_big_id) newMeta.parent_big_id = newMeta.parent_big_id.replace(new RegExp(`^${sourceChatId}`), destChatId);
+          
+          return {
+            id: newId,
+            text: m.text,
+            metadata: newMeta,
+            vector: m.vector || Array(storageAdapter.embeddingDim || 1024).fill(0),
+            collection_id: destCol
+          };
+        });
+        
+        await storageAdapter.insert(mappedMemories);
+        clonedCount += mappedMemories.length;
+      }
+    }
+    
+    toastr.success(`🎉 记忆克隆完成！成功继承了 ${clonedCount} 条记忆节点。`);
+    
+  } catch(err) {
+    console.error('[Hierarchical] Inherit failed:', err);
+    toastr.error('克隆失败，错误: ' + err.message);
+  }
+};
+
+// === 清空层级记忆库 ===
+window.vectors_enhanced_purgeHierarchicalMemory = async function() {
+  const context = getContext();
+  if (!context || !context.chatId) {
+    toastr.warning('当前存档没有被加载');
+    return;
+  }
+  
+  const chatId = context.chatId;
+  const colFloor = `rt_hier_floor_${chatId}`;
+  const colDate = `rt_hier_date_${chatId}`;
+  
+  const confirm = await callGenericPopup(
+    `<div><strong>清空所有层级总结与记忆?</strong><p style="color:var(--warning)">此操作将彻底删除本存档下的所有大总结、小总结以及底层原文。无法找回，是否继续？</p></div>`,
+    POPUP_TYPE.CONFIRM, { okButton: '确认清空', cancelButton: '取消' }
+  );
+  if (confirm !== POPUP_RESULT.AFFIRMATIVE) return;
+  
+  try {
+    if (typeof toastr !== 'undefined') toastr.info('正在清空数据...', 'ArcFess Purge');
+    await storageAdapter.purgeVectorIndex(colFloor);
+    await storageAdapter.purgeVectorIndex(colDate);
+    toastr.success('层级记忆已全部清空！');
+  } catch(err) {
+    toastr.error('清空失败: ' + err.message);
+  }
+};
+
 

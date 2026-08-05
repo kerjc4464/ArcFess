@@ -1,6 +1,26 @@
-/* Vector Storage Enhanced Extension Styles */
+/* ============================================================
+   Vectors Enhanced — 全局样式表
+   
+   涵盖所有 UI 组件的样式定义，按功能区分为:
+     - External Tasks          → 外部任务卡片、导入对话框
+     - Content Selection       → 文件/世界信息/聊天消息选择器
+     - Tag Suggestions         → 标签建议下拉和扫描按钮
+     - Action Buttons          → 预览/导出/向量化/中止按钮
+     - Progress & Status       → 进度条、状态消息、通知
+     - Preview Modal           → 三列预览面板（Chat/File/WI）
+     - Task List               → 任务列表、任务卡片、操作按钮
+     - Tag Preset Management   → 预设保存/加载/切换
+     - Responsive              → 移动端适配和断点
+     - Utility Classes         → 间距、文本省略等实用工具类
+     - Master Switch           → 总开关控制（关闭时折叠所有子面板）
+   
+   CSS 变量继承自 SillyTavern 主题系统:
+     --SmartThemeBodyColor, --SmartThemeQuoteColor, --SmartThemeBorderColor, etc.
+   ============================================================ */
 
-/* External Tasks Styles */
+/* ============================================================
+   External Tasks — 外挂任务界面样式
+   ============================================================ */
 .external-tasks-container {
     margin-top: 10px;
     max-height: 300px;
@@ -144,6 +164,9 @@
     overflow-x: auto;
 }
 
+/* ============================================================
+   Settings Panel — 设置面板基础布局
+   ============================================================ */
 .vectors_enhanced_settings {
     padding: 0.5rem;
 }
@@ -163,7 +186,9 @@
     font-size: 1.1rem;
 }
 
-/* Content selection styles */
+/* ============================================================
+   Content Selection — 内容类型选择器样式
+   ============================================================ */
 .content-type-section {
     margin: 0.5rem 0;
 }
@@ -282,6 +307,9 @@
     color: var(--SmartThemeQuoteColor);
 }
 
+/* ============================================================
+   World Info & File List — 条目样式
+   ============================================================ */
 .wi-list .wi-entry {
     margin-left: 1.5rem;
     font-size: 0.9em;
@@ -302,7 +330,9 @@
     text-overflow: ellipsis;
 }
 
-/* Action buttons */
+/* ============================================================
+   Action Buttons — 操作按钮组样式
+   ============================================================ */
 .vectors-enhanced-actions {
     justify-content: center;
     gap: 0.5rem;
@@ -313,7 +343,9 @@
     max-width: 150px;
 }
 
-/* Status messages */
+/* ============================================================
+   Progress & Status — 进度条和状态消息样式
+   ============================================================ */
 .vectors-enhanced-status {
     text-align: center;
     padding: 0.5rem;
@@ -354,7 +386,10 @@
     color: var(--SmartThemeBodyColor);
 }
 
-/* Preview modal styles */
+/* ============================================================
+   Preview Modal — 三列预览面板（Chat + File + World Info）
+   响应式: 屏幕宽度 < 1200px 时变为竖向堆叠
+   ============================================================ */
 .vector-preview {
     height: 70vh;
     max-height: 800px;
@@ -531,7 +566,9 @@
     margin-bottom: 0.25rem;
 }
 
-/* Utility classes */
+/* ============================================================
+   Utility Classes — 间距、文本省略等通用工具类
+   ============================================================ */
 .m-t-0-5 { margin-top: 0.5rem; }
 .m-b-0-5 { margin-bottom: 0.5rem; }
 .m-t-1 { margin-top: 1rem; }
@@ -544,7 +581,9 @@
     white-space: nowrap;
 }
 
-/* Task list styles */
+/* ============================================================
+   Task List — 任务选择列表和任务项样式
+   ============================================================ */
 .task-list {
     max-height: 300px;
     overflow-y: auto;
@@ -624,7 +663,9 @@
     font-size: 0.9em;
 }
 
-/* Tag preset management styles */
+/* ============================================================
+   Tag Preset Management — 标签预设管理面板（保存/加载/切换）
+   ============================================================ */
 .tag-preset-management {
     background: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
@@ -644,7 +685,9 @@
     white-space: nowrap;
 }
 
-/* External Task Styles - 外挂任务样式（旧版已移除，使用新的布局样式） */
+/* ============================================================
+   External Task Item — 任务项复选框/标签/按钮详细样式
+   ============================================================ */
 
 /* 任务列表项统一高度 */
 .vector-enhanced-task-item .checkbox_label {
@@ -772,8 +815,15 @@
     font-size: 0.9em;
 }
 
-/* Master switch control - 总开关控制 */
-/* 当总开关关闭时，隐藏除了总开关区域外的所有内容 */
-#vectors_enhanced_container:has(#vectors_enhanced_master_enabled:not(:checked)) .vectors-enhanced-section:not(:first-child) {
-    display: none !important;
+/* ============================================================
+   Master Switch — 总开关控制
+   关闭时各分区保持可见但置灰（配合 domUtils.updateMasterSwitchState），
+   避免用户误以为设置面板消失。注意：不要用 display:none !important 隐藏，
+   否则用户会误判为"配置不上"。
+   ============================================================ */
+#vectors_enhanced_container.vectors-disabled .vectors-enhanced-section:not(:first-child) {
+    opacity: 0.45;
+    filter: grayscale(0.4);
+    pointer-events: none;
+    user-select: none;
 }

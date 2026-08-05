@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arc API Tester — 意图分析引擎调试工具</title>
+<style>
+  :root {
+    --bg: #1a1a2e; --surface: #16213e; --text: #e0e0e0;
+    --accent: #7c3aed; --green: #22c55e; --red: #ef4444; --orange: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 1.3em; margin-bottom: 16px; color: var(--accent); }
+  label { font-size: 0.85em; color: #aaa; display: block; margin-top: 10px; }
+  input, textarea, select { width: 100%; padding: 8px 10px; margin-top: 3px; background: var(--surface); border: 1px solid #333; color: var(--text); border-radius: 4px; font-size: 0.9em; }
+  textarea { resize: vertical; font-family: monospace; }
+  button { padding: 10px 24px; background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; margin-top: 12px; }
+  button:hover { opacity: 0.9; }
+  .flex { display: flex; gap: 10px; }
+  .flex > * { flex: 1; }
+  #result { margin-top: 16px; }
+  #result pre { background: var(--surface); padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 0.82em; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  #status { min-height: 1.2em; margin-top: 6px; font-size: 0.9em; }
+  .ok { color: var(--green); } .err { color: var(--red); } .warn { color: var(--orange); }
+  .hint { font-size: 0.78em; color: #666; margin-top: 2px; }
+  .section { margin-top: 16px; padding: 12px; background: var(--surface); border-radius: 6px; }
+  .section h3 { font-size: 0.95em; margin-bottom: 8px; color: #ccc; }
+</style>
+</head>
+<body>
+
+<h1>🧪 Arc 意图分析引擎 — API 调试工具</h1>
+<p class="hint">前端直调（与插件 callLLM 逻辑完全一致），需要端点有 CORS 头（硅基流动有）。</p>
+
+<div class="section">
+  <h3>API 配置</h3>
+  <div class="flex">
+    <div>
+      <label>API URL</label>
+      <input id="url" value="https://api.siliconflow.cn/v1/chat/completions">
+    </div>
+    <div>
+      <label>API Key</label>
+      <input id="key" type="password" placeholder="sk-...">
+    </div>
+  </div>
+  <div class="flex">
+    <div>
+      <label>模型</label>
+      <input id="model" value="kimi-k2.6">
+    </div>
+    <div>
+      <label>超时 (秒)</label>
+      <input id="timeout" type="number" value="60" min="1" max="300">
+    </div>
+  </div>
+  <div class="flex">
+    <div>
+      <label>max_tokens</label>
+      <input id="max_tokens" type="number" value="100" min="1" max="4096">
+    </div>
+    <div>
+      <label>temperature</label>
+      <input id="temperature" type="number" value="0.3" min="0" max="2" step="0.1">
+    </div>
+  </div>
+
+  <label>System Prompt（可选）</label>
+  <input id="system_prompt" placeholder="留空则无 system 消息">
+
+  <label>User 消息内容</label>
+  <textarea id="user_message" rows="4" placeholder="输入测试消息...">只回复"OK"两个字，不要任何其他内容。</textarea>
+</div>
+
+<button onclick="testAPI()">🚀 发送请求</button>
+<div id="status"></div>
+
+<div id="result" style="display:none;">
+  <h3>📦 完整响应 (JSON)</h3>
+  <pre id="raw_response"></pre>
+  <div style="margin-top:8px;">
+    <strong>提取内容:</strong>
+    <pre id="extracted_content" style="background:#1a1a2e;"></pre>
+  </div>
+  <div style="margin-top:4px;">
+    <strong>content 字段:</strong> <code id="content_field">-</code><br>
+    <strong>reasoning 字段:</strong> <code id="reasoning_field">-</code><br>
+    <strong>reasoning_details:</strong> <code id="reasoning_details_field">-</code><br>
+    <strong>耗时:</strong> <span id="duration">-</span>
+  </div>
+</div>
+
+<script>
+async function testAPI() {
+  const url = document.getElementById('url').value.trim();
+  const key = document.getElementById('key').value.trim();
+  const model = document.getElementById('model').value.trim();
+  const timeoutSec = parseInt(document.getElementById('timeout').value) || 60;
+  const maxTokens = parseInt(document.getElementById('max_tokens').value) || 100;
+  const temperature = parseFloat(document.getElementById('temperature').value) || 0.3;
+  const sysPrompt = document.getElementById('system_prompt').value.trim();
+  const userMsg = document.getElementById('user_message').value.trim();
+
+  if (!url || !key) { setStatus('请填写 API URL 和 Key', 'err'); return; }
+  if (!userMsg) { setStatus('请填写测试消息', 'err'); return; }
+
+  const resultDiv = document.getElementById('result');
+  resultDiv.style.display = 'none';
+  setStatus('⏳ 发送请求...', '');
+
+  const messages = [];
+  if (sysPrompt) messages.push({ role: 'system', content: sysPrompt });
+  messages.push({ role: 'user', content: userMsg });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutSec * 1000);
+  const t0 = Date.now();
+
+  try {
+    // ── 与 callLLM 一模一样的直调逻辑 ──
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    const elapsed = Date.now() - t0;
+    document.getElementById('duration').textContent = elapsed + 'ms';
+
+    const data = await response.json();
+    document.getElementById('raw_response').textContent = JSON.stringify(data, null, 2);
+    resultDiv.style.display = 'block';
+
+    // ── 错误处理（与 callLLM 一致）──
+    if (!response.ok) {
+      const errMsg = (typeof data.error === 'object' && data.error !== null)
+        ? (data.error.message || data.error.code || JSON.stringify(data.error))
+        : (data.error || `HTTP ${response.status}`);
+      setStatus(`❌ 请求失败: ${errMsg}`, 'err');
+      return;
+    }
+
+    // ── 提取内容（与 callLLM 一致：content → reasoning → reasoning_details）──
+    const msg = data.choices?.[0]?.message;
+    document.getElementById('content_field').textContent = JSON.stringify(msg?.content ?? '(null)');
+    document.getElementById('reasoning_field').textContent = JSON.stringify(msg?.reasoning ?? msg?.reasoning_content ?? '(null)');
+    document.getElementById('reasoning_details_field').textContent = msg?.reasoning_details ? JSON.stringify(msg.reasoning_details[0]) : '(null)';
+
+    let extracted = msg?.content ?? msg?.reasoning_content ?? msg?.reasoning;
+    if (extracted == null && msg?.reasoning_details?.length) {
+      extracted = msg.reasoning_details[0].text || JSON.stringify(msg.reasoning_details[0]);
+    }
+    document.getElementById('extracted_content').textContent = extracted ?? '(无法提取)';
+
+    if (extracted && extracted.trim()) {
+      setStatus(`✅ 成功 | ${elapsed}ms | 提取到 ${extracted.length} 字符`, 'ok');
+    } else {
+      setStatus(`⚠️ 端点返回 200 但无内容 (content=null? 推理模型 reasoning 也未抓到?)`, 'warn');
+    }
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    const elapsed = Date.now() - t0;
+
+    if (err.name === 'AbortError') {
+      setStatus(`❌ 超时 (${(elapsed/1000).toFixed(1)}s / 配置 ${timeoutSec}s)`, 'err');
+    } else {
+      setStatus(`❌ 网络错误 (${(elapsed/1000).toFixed(1)}s): ${err.message}`, 'err');
+    }
+  }
+}
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = cls || '';
+}
+</script>
+</body>
+</html>

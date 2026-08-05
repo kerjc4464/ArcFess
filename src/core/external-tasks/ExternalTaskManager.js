@@ -57,8 +57,10 @@ export class ExternalTaskManager {
     const externalTask = {
       taskId: `task_ext_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       type: "external",
+      source: `${sourceChatId}_${sourceTaskId}`,  // 统一源引用格式
       sourceChat: sourceChatId,
       sourceTaskId: sourceTaskId,
+      sourceName: sourceTask.name,
       name: customName || `外挂：${sourceTask.name}`,
       displayName: customName,
       enabled: true,
@@ -169,39 +171,37 @@ export class ExternalTaskManager {
   }
 
   /**
-   * 标记孤儿外挂任务
+   * 删除孤儿外挂任务（源聊天被删除时自动清理）
    * @param {string} deletedChatId - 被删除的聊天ID
-   * @returns {Promise<number>} 标记的孤儿任务数量
+   * @returns {Promise<number>} 删除的孤儿任务数量
    */
-  async markOrphanedExternalTasks(deletedChatId) {
-    this.logger.debug(`标记孤儿外挂任务: ${deletedChatId}`);
+  async removeOrphanedExternalTasks(deletedChatId) {
+    this.logger.debug(`删除孤儿外挂任务: ${deletedChatId}`);
 
-    let orphanedCount = 0;
+    let removedCount = 0;
     const allTasks = this.getAllChatTasks();
 
     for (const [chatId, tasks] of Object.entries(allTasks)) {
       if (!tasks || !Array.isArray(tasks)) continue;
 
-      const orphanedTasks = tasks.filter(task =>
-        task.type === "external" && task.sourceChat === deletedChatId
-      );
+      const beforeCount = tasks.length;
+      const filtered = tasks.filter(task => {
+        if (task.type === "external" && task.sourceChat === deletedChatId) {
+          this.logger.info(`删除孤儿外挂任务: ${task.name} (from chat ${chatId})`);
+          return false;
+        }
+        return true;
+      });
 
-      if (orphanedTasks.length > 0) {
-        orphanedTasks.forEach(task => {
-          task.orphaned = true;
-          task.enabled = false;
-          task.name = "源数据已删除";
-        });
-
-        this.saveChatTasks(chatId, tasks);
-        orphanedCount += orphanedTasks.length;
-        
-        this.logger.info(`在聊天 ${chatId} 中标记了 ${orphanedTasks.length} 个孤儿外挂任务`);
+      if (filtered.length !== beforeCount) {
+        this.saveChatTasks(chatId, filtered);
+        removedCount += (beforeCount - filtered.length);
+        this.logger.info(`在聊天 ${chatId} 中删除了 ${beforeCount - filtered.length} 个孤儿外挂任务`);
       }
     }
 
-    this.logger.info(`总共标记了 ${orphanedCount} 个孤儿外挂任务`);
-    return orphanedCount;
+    this.logger.info(`总共删除了 ${removedCount} 个孤儿外挂任务`);
+    return removedCount;
   }
 
   /**

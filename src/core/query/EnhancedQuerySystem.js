@@ -34,7 +34,6 @@ export class EnhancedQuerySystem {
       return [];
     }
 
-    const results = [];
     const {
       perTaskLimit = 10,
       scoreThreshold = 0.5,
@@ -42,28 +41,73 @@ export class EnhancedQuerySystem {
       maxResults = 100
     } = options;
 
-    // 并行查询所有任务
-    const queryPromises = tasks.map(task => 
-      this.querySingleTask(task, chatId, queryText, {
-        perTaskLimit,
-        scoreThreshold,
-        includeMetadata
-      })
-    );
-
     try {
-      const taskResults = await Promise.all(queryPromises);
-      
-      // 合并结果
-      for (const taskResult of taskResults) {
-        if (taskResult && taskResult.items && taskResult.items.length > 0) {
-          results.push(...taskResult.items);
+      // 1. 提取所有有效的 collectionId 并建立映射
+      const validTasks = [];
+      const collectionIds = [];
+
+      for (const task of tasks) {
+        const resolved = this.taskResolver.resolve(task);
+        if (!resolved.valid) {
+          this.logger.warn(`跳过失效任务: ${task.name} - ${resolved.reason}`);
+          continue;
+        }
+
+        const collectionId = this.vectorManager.getCollectionId(task, chatId);
+        const exists = await this.vectorManager.collectionExists(collectionId);
+        
+        if (exists) {
+          validTasks.push({ task, resolved, collectionId });
+          collectionIds.push(collectionId);
         }
       }
 
-      // 按分数排序并限制结果数量
-      results.sort((a, b) => (b.score || 0) - (a.score || 0));
-      const limitedResults = results.slice(0, maxResults);
+      if (collectionIds.length === 0) {
+        return [];
+      }
+
+      // 2. 单次查询多个集合，避免并发风暴
+      const totalLimit = perTaskLimit * collectionIds.length;
+      const batchResults = await this.storageAdapter.queryMultipleCollections(
+        collectionIds,
+        queryText,
+        totalLimit,
+        scoreThreshold
+      );
+
+      if (!batchResults || !batchResults.items || batchResults.items.length === 0) {
+        return [];
+      }
+
+      // 3. 元数据回填，确保前端UI正常显示
+      if (includeMetadata) {
+        batchResults.items.forEach(item => {
+          // 通过后端返回的 collection_id 找回对应的任务信息
+          const sourceInfo = validTasks.find(t => t.collectionId === item.metadata.collection_id);
+          
+          if (sourceInfo) {
+            const { task, resolved } = sourceInfo;
+            item.metadata = {
+              ...item.metadata,
+              taskId: task.taskId,
+              taskName: task.name,
+              isExternal: task.type === "external",
+              chatId: chatId,
+              queryTime: Date.now()
+            };
+
+            if (task.type === "external") {
+              item.metadata.sourceChat = task.sourceChat;
+              item.metadata.sourceTaskId = task.sourceTaskId;
+              item.metadata.sourceTaskName = resolved.task.name;
+            }
+          }
+        });
+      }
+
+      // 4. 全局排序并截断
+      batchResults.items.sort((a, b) => (b.score || 0) - (a.score || 0));
+      const limitedResults = batchResults.items.slice(0, maxResults);
 
       this.logger.info(`查询完成: 返回 ${limitedResults.length} 个结果`);
       return limitedResults;

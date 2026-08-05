@@ -84,18 +84,12 @@ export class MemoryService {
 
             this.addToHistory(historyEntry);
 
-            // 发布完成事件
-            this.eventBus?.emit('memory:message-complete', {
-                message,
-                response,
-                historyEntry
-            });
+            // 必须触发此事件，否则前端 UI 会一直显示"正在处理..."
+            if (this.eventBus) {
+                this.eventBus.emit('memory:message-complete', { response: response });
+            }
 
-            return {
-                success: true,
-                response,
-                historyEntry
-            };
+            return { success: true, response: response };
 
         } catch (error) {
             // 发布错误事件
@@ -257,10 +251,11 @@ export class MemoryService {
             apiUrl = apiUrl + '/chat/completions';
         }
 
+        let timeoutId = null;
         try {
             // 创建超时控制器
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 150000); // 150秒超时
+            timeoutId = setTimeout(() => controller.abort(), 150000); // 150秒超时
             
             // 构建消息格式 - 使用preset.js中定义的结构
             const messages = [];
@@ -332,17 +327,35 @@ export class MemoryService {
             });
             
             clearTimeout(timeoutId);
+            timeoutId = null;
 
             if (!response.ok) {
                 const error = await response.text();
                 console.error('[OpenAI] API错误:', error);
-                throw new Error(`OpenAI兼容API错误: ${error}`);
+                throw new Error(`API 请求失败 (${response.status}): ${error}`);
             }
 
-            const data = await response.json();
+            const responseText = await response.text();
+            let finalContent = '';
 
-            const content = data.choices?.[0]?.message?.content || '';
-            return content;
+            try {
+                // 尝试解析为 JSON（适配某些 API 的标准返回）
+                const jsonResponse = JSON.parse(responseText);
+                // 兼容不同 API 的层级结构
+                finalContent = jsonResponse.choices?.[0]?.message?.content || 
+                               jsonResponse.candidates?.[0]?.content?.parts?.[0]?.text || 
+                               jsonResponse.content || 
+                               responseText;
+            } catch (e) {
+                // 如果不是 JSON，说明 API 直接返回了纯文本内容
+                finalContent = responseText;
+            }
+
+            if (!finalContent || finalContent.trim().length === 0) {
+                throw new Error('AI 返回内容为空');
+            }
+
+            return finalContent;
 
         } catch (error) {
             if (error.name === 'AbortError') {
@@ -352,6 +365,8 @@ export class MemoryService {
             console.error('[OpenAI] 调用失败:', error.message);
             console.error('[OpenAI] 错误详情:', error);
             throw error;
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
     }
 
@@ -565,10 +580,11 @@ export class MemoryService {
         // 使用Google官方的OpenAI兼容端点
         const endpoint = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
+        let timeoutId = null;
         try {
             // 创建超时控制器
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 150000); // 150秒超时
+            timeoutId = setTimeout(() => controller.abort(), 150000); // 150秒超时
             
             // 使用简化的消息格式，避免复杂的多轮对话
             const messages = [
@@ -616,18 +632,32 @@ export class MemoryService {
             clearTimeout(timeoutId);
 
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                const errorData = await response.text();
                 console.error('[Google via OpenAI] 错误响应:', errorData);
-                throw new Error(`API错误 (${response.status}): ${JSON.stringify(errorData)}`);
+                throw new Error(`API 请求失败 (${response.status}): ${errorData}`);
             }
 
-            const data = await response.json();
+            const responseText = await response.text();
+            let finalContent = '';
 
-            if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-                throw new Error('API返回格式错误');
+            try {
+                // 尝试解析为 JSON（适配某些 API 的标准返回）
+                const jsonResponse = JSON.parse(responseText);
+                // 兼容不同 API 的层级结构
+                finalContent = jsonResponse.choices?.[0]?.message?.content || 
+                               jsonResponse.candidates?.[0]?.content?.parts?.[0]?.text || 
+                               jsonResponse.content || 
+                               responseText;
+            } catch (e) {
+                // 如果不是 JSON，说明 API 直接返回了纯文本内容
+                finalContent = responseText;
             }
 
-            return data.choices[0].message.content;
+            if (!finalContent || finalContent.trim().length === 0) {
+                throw new Error('AI 返回内容为空');
+            }
+
+            return finalContent;
 
         } catch (error) {
             if (error.name === 'AbortError') {
@@ -637,6 +667,8 @@ export class MemoryService {
             console.error('[Google via OpenAI] 调用失败:', error.message);
             console.error('[Google via OpenAI] 错误详情:', error);
             throw error;
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
     }
 }

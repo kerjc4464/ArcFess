@@ -1,341 +1,379 @@
+// @ts-nocheck
 /**
- * @file StorageAdapter.js
- * @description 存储适配器，封装所有向量存储相关的操作
- * @module infrastructure/storage/StorageAdapter
+ * Arc Custom Storage Adapter (V2.4 Task-Aware Edition)
+ * 最终完全体：修复了 TaskID 注入、删除逻辑和缓存清理
  */
 
-import { Logger } from '../../utils/Logger.js';
-
-const logger = new Logger('StorageAdapter');
-
-/**
- * 存储适配器类
- * 封装所有与向量存储相关的API调用
- */
 export class StorageAdapter {
     constructor(dependencies = {}) {
-        this.baseUrl = '/api/vector';
-        // 依赖注入，避免循环引用
-        this.getRequestHeaders = dependencies.getRequestHeaders;
         this.getVectorsRequestBody = dependencies.getVectorsRequestBody;
-        this.throwIfSourceInvalid = dependencies.throwIfSourceInvalid;
-        this.cachedVectors = dependencies.cachedVectors;
-        
-        logger.log('StorageAdapter initialized');
+        this.getRequestHeaders = dependencies.getRequestHeaders;
+        this.baseUrl = `http://${window.location.hostname}:8999`;
+        this.isConnected = false;
+        // 获取缓存引用，如果没有传则新建一个 Map 防止报错
+        this.cachedVectors = dependencies.cachedVectors || new Map();
+        console.log(`[TsukiHana] V2.4 存储适配器已加载 | 目标: ${this.baseUrl}`);
     }
 
-    /**
-     * 获取集合中保存的哈希值列表
-     * @param {string} collectionId 集合ID
-     * @returns {Promise<number[]>} 哈希值数组
-     */
-    async getSavedHashes(collectionId) {
+    async init() {
         try {
-            logger.log(`Getting saved hashes for collection: ${collectionId}`);
-            
-            const response = await fetch(`${this.baseUrl}/list`, {
-                method: 'POST',
-                headers: this.getRequestHeaders(),
-                body: JSON.stringify({
-                    ...this.getVectorsRequestBody(),
-                    collectionId: collectionId,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to get saved hashes for collection ${collectionId}`);
-            }
-
-            const hashes = await response.json();
-            logger.log(`Retrieved ${hashes.length} hashes for collection ${collectionId}`);
-            return hashes;
+            const response = await fetch(`${this.baseUrl}/status`);
+            if (!response.ok) throw new Error('Server returned error');
+            const data = await response.json();
+            this.isConnected = true;
+            this.embeddingDim = data.dim || 1024; // 保存维度！
+            console.log(`%c[TsukiHana] 核心在线 ✅ | 记忆: ${data.count} | 维度: ${data.dim || '自动'}`, 'color: #00ff00; background: #000; padding: 4px;');
+            return true;
         } catch (error) {
-            logger.error(`Error getting saved hashes: ${error.message}`);
-            throw error;
+            console.error('[TsukiHana] ❌ 连接失败:', error);
+            if (typeof toastr !== 'undefined') toastr.error('Arc V2 服务离线', 'Memory Offline');
+            return false;
         }
     }
 
-    /**
-     * 插入向量项到集合中
-     * @param {string} collectionId 集合ID
-     * @param {object[]} items 要插入的项
-     * @param {AbortSignal} signal 可选的中断信号
-     * @param {Object} options 额外选项
-     * @param {boolean} options.skipDeduplication 是否跳过去重检查
-     * @returns {Promise<void>}
-     */
-    async insertVectorItems(collectionId, items, signal = null, options = {}) {
+    // === 虚拟文件列表 ===
+    async listFiles() {
         try {
-            logger.log(`Inserting ${items.length} items into collection: ${collectionId}`);
-            
-            this.throwIfSourceInvalid();
-
-            const response = await fetch(`${this.baseUrl}/insert`, {
-                method: 'POST',
-                headers: this.getRequestHeaders(),
-                body: JSON.stringify({
-                    ...this.getVectorsRequestBody(),
-                    collectionId: collectionId,
-                    items: items,
-                    skipDeduplication: options.skipDeduplication || false,
-                }),
-                signal: signal,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to insert vector items for collection ${collectionId}`);
-            }
-
-            logger.log(`Successfully inserted ${items.length} items`);
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                logger.log('Insert operation was aborted');
-            } else {
-                logger.error(`Error inserting vector items: ${error.message}`);
-            }
-            throw error;
-        }
-    }
-
-    /**
-     * 查询集合
-     * @param {string} collectionId 集合ID
-     * @param {string} searchText 搜索文本
-     * @param {number} topK 返回结果数量
-     * @param {number} threshold 相似度阈值
-     * @returns {Promise<{hashes: number[], metadata: object[], items?: object[]}>}
-     */
-    async queryCollection(collectionId, searchText, topK, threshold = 0.25) {
-        try {
-            logger.log(`Querying collection ${collectionId} with text: "${searchText.substring(0, 50)}..."`);
-            
-            const response = await fetch(`${this.baseUrl}/query`, {
-                method: 'POST',
-                headers: this.getRequestHeaders(),
-                body: JSON.stringify({
-                    ...this.getVectorsRequestBody(),
-                    collectionId: collectionId,
-                    searchText: searchText,
-                    topK: topK,
-                    threshold: threshold,
-                    includeText: true,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to query collection ${collectionId}`);
-            }
-
-            const result = await response.json();
-            logger.log(`Query returned ${result.hashes?.length || result.items?.length || 0} results`);
-            
-            // 添加调试日志查看返回的完整结构
-            if (result && (result.hashes?.length > 0 || result.items?.length > 0)) {
-                logger.log('Query result structure:', {
-                    hasHashes: !!result.hashes,
-                    hasMetadata: !!result.metadata,
-                    hasItems: !!result.items,
-                    hasDistances: !!result.distances,
-                    hasSimilarities: !!result.similarities,
-                    keys: Object.keys(result)
-                });
-                
-                // 如果有距离数组，显示前几个值
-                if (result.distances && result.distances.length > 0) {
-                    logger.log('First 3 distances:', result.distances.slice(0, 3));
-                }
-            }
-            
-            // Decode metadata from text field if present
-            if (result.metadata && Array.isArray(result.metadata)) {
-                result.metadata = result.metadata.map(item => {
-                    if (item.text) {
-                        const decoded = this.decodeMetadataFromText(item.text);
-                        return {
-                            ...item,
-                            text: decoded.text,
-                            decodedType: decoded.metadata.type,
-                            decodedOriginalIndex: decoded.metadata.originalIndex
-                        };
-                    }
-                    return item;
-                });
-            }
-            
-            return result;
-        } catch (error) {
-            logger.error(`Error querying collection: ${error.message}`);
-            throw error;
-        }
-    }
-
-    /**
-     * 获取特定哈希值的文本内容
-     * 注意：SillyTavern没有/retrieve端点，但文本存储在query结果的metadata中
-     * @param {string} collectionId 集合ID
-     * @param {number[]} hashes 哈希值数组
-     * @returns {Promise<Array>} {hash, text, metadata} 对象数组
-     */
-    async getVectorTexts(collectionId, hashes) {
-        try {
-            logger.log(`Retrieving texts for ${hashes.length} hashes from collection: ${collectionId}`);
-            
-            // SillyTavern没有专门的retrieve端点，但我们可以通过query获取metadata中的文本
-            // 使用一个无关的搜索词来获取所有项目的metadata
-            const response = await fetch(`${this.baseUrl}/query`, {
-                method: 'POST',
-                headers: this.getRequestHeaders(),
-                body: JSON.stringify({
-                    ...this.getVectorsRequestBody(),
-                    collectionId: collectionId,
-                    searchText: "", // 使用空字符串而不是虚假搜索词
-                    topK: 999999, // 增加到足够大的值
-                    threshold: -1.0, // 使用负值确保接受所有结果
-                    includeText: true,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Failed to retrieve texts for collection ${collectionId}`);
-            }
-
-            const result = await response.json();
-            logger.log(`Retrieved metadata for ${result.metadata?.length || 0} items`);
-            
-            // 过滤并格式化结果，只返回请求的哈希值
-            const texts = [];
-            if (result.metadata && Array.isArray(result.metadata)) {
-                for (const metadata of result.metadata) {
-                    if (hashes.includes(metadata.hash)) {
-                        // 只添加有实际文本内容的项目
-                        if (metadata.text && metadata.text.trim()) {
-                            // Decode metadata from text
-                            const decoded = this.decodeMetadataFromText(metadata.text);
-                            texts.push({
-                                hash: metadata.hash,
-                                text: decoded.text,
-                                metadata: {
-                                    ...metadata,
-                                    decodedType: decoded.metadata.type,
-                                    decodedOriginalIndex: decoded.metadata.originalIndex
-                                }
-                            });
-                        }
-                    }
-                }
-            }
-            
-            logger.log(`Filtered and retrieved ${texts.length} texts matching requested hashes`);
-            return texts;
-        } catch (error) {
-            logger.error(`Error retrieving texts: ${error.message}`);
+            const response = await fetch(`${this.baseUrl}/collections`);
+            if (!response.ok) return [];
+            const data = await response.json();
+            return data.collections.map(col => ({
+                name: col.name, 
+                size: col.count * 1024, 
+                date: Date.now()
+            }));
+        } catch (err) {
+            console.error('[TsukiHana] 获取集合列表失败:', err);
             return [];
         }
     }
 
-    /**
-     * 清除向量索引
-     * @param {string} collectionId 集合ID
-     * @returns {Promise<boolean>} 是否成功
-     */
-    async purgeVectorIndex(collectionId) {
+    // === 获取集合中所有的 ID 列表 (用于实时增量同步) ===
+    async getCollectionIds(collectionId) {
+        if (!collectionId) return [];
         try {
-            logger.log(`Purging vector index for collection: ${collectionId}`);
+            const response = await fetch(`${this.baseUrl}/collection_ids`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ collection_id: collectionId })
+            });
+            if (!response.ok) return [];
+            const data = await response.json();
+            return data.ids || [];
+        } catch (err) {
+            console.error(`[TsukiHana] 获取集合 ${collectionId} 的 IDs 失败:`, err);
+            return [];
+        }
+    }
+
+    async query(vector, k = 5, explicitCollections = null) {
+        try {
+            let allowedCollections = [];
+            if (explicitCollections && explicitCollections.length > 0) {
+                allowedCollections = explicitCollections;
+                if (!allowedCollections.includes('global')) allowedCollections.push('global');
+            } else {
+                // @ts-ignore
+                const context = window.SillyTavern.getContext();
+                if (context.chatId) {
+                    allowedCollections.push(context.chatId);
+                    allowedCollections.push(`rt_${context.chatId}`);
+                }
+                if (context.characterId) allowedCollections.push(context.characterId);
+                allowedCollections.push('global');
+            }
+
+            const response = await fetch(`${this.baseUrl}/query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vector, k, collections: allowedCollections })
+            });
             
+            if (!response.ok) throw new Error('Query failed');
+            const data = await response.json();
+            return { items: data.results || [] };
+        } catch (err) {
+            console.error('[TsukiHana] Query Error:', err);
+            return { items: [] };
+        }
+    }
+
+    // === 核心方法：按 TaskID 物理删除 ===
+    async deleteTask(taskId) {
+        if (!taskId) return false;
+        try {
+            console.log(`[Storage] Requesting deletion for task: ${taskId}`);
+            const response = await fetch(`${this.baseUrl}/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                // 发送 filter 指令给后端 (需要配合后端 V7.1 更新)
+                body: JSON.stringify({ filter: { taskId: taskId } })
+            });
+            
+            if (!response.ok) throw new Error('Delete failed');
+            const result = await response.json();
+            console.log(`[Storage] Deleted ${result.deleted} memories for task ${taskId}`);
+            return true;
+        } catch (err) { 
+            console.error("[Storage] Delete Task Error:", err);
+            return false; 
+        }
+    }
+
+    // 旧的删除方法 (保留兼容)
+    async delete(ids) {
+        if (!ids || ids.length === 0) return true;
+        try {
+            const response = await fetch(`${this.baseUrl}/delete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids })
+            });
+            if (!response.ok) throw new Error('Delete failed');
+            return true;
+        } catch (err) { return false; }
+    }
+
+    // === 清理逻辑升级 ===
+    // 优先尝试从 collectionId 中提取 taskId 进行删除
+    async purgeVectorIndex(collectionId) {
+        // 1. 尝试识别 taskId (从最后一个 _task_ 处分割，避免 chatId 中包含 _task_ 的误判)
+        if (collectionId && collectionId.includes('_task_')) {
+            const lastIdx = collectionId.lastIndexOf('_task_');
+            if (lastIdx > 0) {
+                const taskId = collectionId.substring(lastIdx + 1);
+                console.log(`[Storage] Purge 升级: 正在调用 deleteTask(${taskId})`);
+                return await this.deleteTask(taskId);
+            }
+        }
+
+        // 2. 回退到集合清空 (后端 V7.1 的 /purge 现已可用)
+        if (!collectionId) return false;
+        try {
             const response = await fetch(`${this.baseUrl}/purge`, {
                 method: 'POST',
-                headers: this.getRequestHeaders(),
-                body: JSON.stringify({
-                    ...this.getVectorsRequestBody(),
-                    collectionId: collectionId,
-                }),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ collection_id: collectionId })
             });
+            if (!response.ok) throw new Error('Purge failed');
+            const result = await response.json();
+            console.log(`[Storage] Purged collection ${collectionId}: ${result.deleted} items`);
+            if (typeof toastr !== 'undefined') toastr.success(`已清空集合 ${collectionId}`);
+            return true;
+        } catch (err) { 
+            console.error("[Storage] Purge Failed:", err);
+            return false; 
+        }
+    }
 
-            if (!response.ok) {
-                throw new Error(`Could not delete vector index for collection ${collectionId}`);
+    // === 核心方法：插入时注入 TaskID ===
+    async insertVectorItems(collectionId, items, signal, options) {
+        if (!items || items.length === 0) return;
+        try {
+            const config = this.getVectorsRequestBody ? this.getVectorsRequestBody() : {};
+            const texts = items.map(i => i.text);
+            
+            // 获取 TaskID (关键修复!)
+            const taskId = options?.taskId; 
+
+            let vectors = [];
+            
+            if (config.source === 'vllm' || config.source === 'openai') {
+                vectors = await this._fetchOpenAIEmbeddings(texts, config, signal);
+            } else if (config.source === 'ollama') {
+                vectors = await this._fetchOllamaEmbeddings(texts, config, signal);
+            } else {
+                throw new Error(`不支持的向量源: ${config.source}`);
             }
 
-            // 清除缓存
-            if (this.cachedVectors && this.cachedVectors.delete) {
-                this.cachedVectors.delete(collectionId);
+            const payloadItems = items.map((item, idx) => ({
+                id: item.metadata?.uid || `${Date.now()}_${idx}`,
+                text: item.text,
+                // === 注入点：确保 metadata 包含 taskId ===
+                metadata: {
+                    ...(item.metadata || {}),
+                    taskId: taskId, // 注入！
+                    timestamp: Date.now()
+                },
+                vector: vectors[idx],
+                collection_id: collectionId || 'global'
+            }));
+
+            await this.insert(payloadItems);
+        } catch (err) {
+            console.error('[TsukiHana] 批量向量化失败:', err);
+            if (typeof toastr !== 'undefined') toastr.error(`向量化失败: ${err.message}`);
+            throw err;
+        }
+    }
+
+    async queryCollection(collectionId, queryText, limit, threshold) {
+        try {
+            const config = this.getVectorsRequestBody ? this.getVectorsRequestBody() : {};
+            if (!config.source) return { items: [] };
+            let vectors = [];
+            if (config.source === 'vllm' || config.source === 'openai') {
+                 vectors = await this._fetchOpenAIEmbeddings([queryText], config);
+            } else if (config.source === 'ollama') {
+                 vectors = await this._fetchOllamaEmbeddings([queryText], config);
+            }
+            if (vectors.length > 0) {
+                return this.query(vectors[0], limit, [collectionId]);
+            }
+            return { items: [] };
+        } catch (e) {
+            return { items: [] };
+        }
+    }
+
+    async queryMultipleCollections(collectionIds, queryText, limit, threshold) {
+        try {
+            const config = this.getVectorsRequestBody ? this.getVectorsRequestBody() : {};
+            if (!config.source) return { items: [] };
+            
+            let vectors = [];
+            if (config.source === 'vllm' || config.source === 'openai') {
+                 vectors = await this._fetchOpenAIEmbeddings([queryText], config);
+            } else if (config.source === 'ollama') {
+                 vectors = await this._fetchOllamaEmbeddings([queryText], config);
             }
             
-            logger.log(`Successfully purged vector index for ${collectionId}`);
-            return true;
-        } catch (error) {
-            logger.error(`Error purging vector index: ${error.message}`);
-            return false;
-        }
-    }
-
-    /**
-     * 检查集合是否存在
-     * @param {string} collectionId 集合ID
-     * @returns {Promise<boolean>} 是否存在
-     */
-    async collectionExists(collectionId) {
-        try {
-            const hashes = await this.getSavedHashes(collectionId);
-            return hashes && hashes.length > 0;
-        } catch (error) {
-            // 如果获取失败，假设集合不存在
-            return false;
-        }
-    }
-
-    /**
-     * 获取集合统计信息
-     * @param {string} collectionId 集合ID
-     * @returns {Promise<{count: number, exists: boolean}>}
-     */
-    async getCollectionStats(collectionId) {
-        try {
-            const hashes = await this.getSavedHashes(collectionId);
-            return {
-                exists: true,
-                count: hashes.length
-            };
-        } catch (error) {
-            return {
-                exists: false,
-                count: 0
-            };
-        }
-    }
-
-    /**
-     * Decode metadata from encoded text
-     * @param {string} encodedText - Text with metadata prefix
-     * @returns {{text: string, metadata: {type?: string, originalIndex?: number, floor?: number, entry?: string, tag?: string, chunk?: string}}}
-     * @private
-     */
-    decodeMetadataFromText(encodedText) {
-        if (!encodedText) {
-            return { text: encodedText, metadata: {} };
-        }
-        
-        const metaMatch = encodedText.match(/^\[META:([^\]]+)\]/);
-        if (!metaMatch) {
-            return { text: encodedText, metadata: {} };
-        }
-        
-        const metaString = metaMatch[1];
-        const text = encodedText.substring(metaMatch[0].length);
-        const metadata = {};
-        
-        // Parse metadata key-value pairs
-        const pairs = metaString.split(',');
-        for (const pair of pairs) {
-            const [key, value] = pair.split('=');
-            if (key && value) {
-                if (key === 'originalIndex' || key === 'floor') {
-                    metadata[key] = parseInt(value, 10);
-                } else {
-                    metadata[key] = value;
-                }
+            if (vectors.length > 0) {
+                // 直接将 collectionIds 数组传递给底层 query，实现单次并发检索
+                return this.query(vectors[0], limit, collectionIds);
             }
+            return { items: [] };
+        } catch (e) {
+            console.error('[TsukiHana] queryMultipleCollections 失败:', e);
+            return { items: [] };
         }
-        
-        return { text, metadata };
+    }
+
+    /**
+     * BM25 关键词检索（通过后端 FTS5）
+     * @param {string} text - 查询文本
+     * @param {number} limit - 返回结果数
+     * @param {string[]} collections - 限定的 collection 列表
+     * @returns {Promise<{items: Array}>}
+     */
+    async hybridQuery(text, limit = 10, collections = null, options = {}) {
+        try {
+            const allowedCollections = collections || [];
+            const response = await fetch(`${this.baseUrl}/hybrid_query`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text,
+                    k: limit,
+                    collections: allowedCollections,
+                    k1: options.k1,
+                    b: options.b,
+                    min_score: options.min_score
+                })
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            return { items: data.results || [], debug: data.debug || null };
+        } catch (e) {
+            console.error('[TsukiHana] hybridQuery 失败:', e);
+            return { items: [], debug: null };
+        }
+    }
+
+    async _fetchOpenAIEmbeddings(texts, config, signal) {
+        const apiUrl = config.apiUrl || config.vllm_url;
+        const endpoint = apiUrl.endsWith('/v1') ? `${apiUrl}/embeddings` : 
+                         apiUrl.endsWith('/') ? `${apiUrl}v1/embeddings` : `${apiUrl}/v1/embeddings`;
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey || 'sk-xxxx'}` },
+            body: JSON.stringify({ input: texts, model: config.model }),
+            signal
+        });
+        if (!response.ok) throw new Error(await response.text());
+        return (await response.json()).data.map(item => item.embedding);
+    }
+    
+    async _fetchOllamaEmbeddings(texts, config, signal) {
+        const apiUrl = config.apiUrl || 'http://localhost:11434';
+        const vectors = [];
+        for (const text of texts) {
+            const response = await fetch(`${apiUrl}/api/embeddings`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: config.model, prompt: text }),
+                signal
+            });
+            if (!response.ok) throw new Error('Ollama Error');
+            vectors.push((await response.json()).embedding);
+        }
+        return vectors;
+    }
+
+    async insert(entry) {
+        const entries = Array.isArray(entry) ? entry : [entry];
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+            const chunk = entries.slice(i, i + BATCH_SIZE);
+            await Promise.all(chunk.map(item => fetch(`${this.baseUrl}/insert`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(item)
+            })));
+        }
+    }
+
+    async clear() { return true; }
+    async count() { try { return (await (await fetch(`${this.baseUrl}/status`)).json()).count; } catch { return 0; } }
+
+    /**
+     * 获取后端真实存在的任务列表
+     * @returns {Promise<Set<string>>} 后端有数据的 taskId 集合
+     */
+    async getActiveTasks() {
+        try {
+            const response = await fetch(`${this.baseUrl}/tasks_stats`);
+            if (!response.ok) throw new Error('Failed to fetch tasks_stats');
+            const data = await response.json();
+            if (!data.tasks || !Array.isArray(data.tasks)) return new Set();
+            const taskIds = new Set(data.tasks.map(t => t.taskId));
+            console.log(`[Storage] Backend reports ${taskIds.size} active task(s)`);
+            return taskIds;
+        } catch (err) {
+            console.error('[Storage] getActiveTasks failed:', err);
+            return null; // null 表示后端离线或出错，调用方应跳过清理
+        }
+    }
+
+    async getCollectionMemories(collectionId) {
+        if (!collectionId) return [];
+        try {
+            const response = await fetch(`${this.baseUrl}/get_collection_memories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ collection_id: collectionId })
+            });
+            if (!response.ok) return [];
+            const data = await response.json();
+            return data.memories || [];
+        } catch (err) {
+            console.error(`[Storage] getCollectionMemories 失败:`, err);
+            return [];
+        }
+    }
+
+    async updateMetadata(id, metadata) {
+        if (!id || !metadata) return false;
+        try {
+            const response = await fetch(`${this.baseUrl}/update_metadata`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, metadata })
+            });
+            return response.ok;
+        } catch (err) {
+            console.error(`[Storage] updateMetadata 失败:`, err);
+            return false;
+        }
     }
 }

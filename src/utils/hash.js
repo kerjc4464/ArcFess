@@ -1,6 +1,9 @@
 // This function was migrated from an external dependency (utils.js)
 // to ensure project independence and reduce external reliance.
 
+// 内部缓存，提高性能
+const hashCache = new Map();
+
 /**
  * Calculates a hash code for a string.
  * @param {string} str The string to hash.
@@ -24,4 +27,19 @@ export function getStringHash(str, seed = 0) {
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
 
     return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/**
+ * Gets the hash value for a given string (with caching)
+ * 这就是 FusionManager 需要的那个函数！
+ * @param {string} str Input string
+ * @returns {number} Hash value
+ */
+export function getHashValue(str) {
+    if (hashCache.has(str)) {
+        return hashCache.get(str);
+    }
+    const hash = getStringHash(str);
+    hashCache.set(str, hash);
+    return hash;
 }

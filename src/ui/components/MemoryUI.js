@@ -12,17 +12,9 @@ import { chat_metadata, saveChatDebounced } from '../../../../../../../script.js
 
 // Using preset format - prompts removed
 
-// Detail level configurations
-const detailLevels = {
-    concise: '每个分解事件不少于3句话，100字',
-    normal: '每个分解事件不少于5句话，150字',
-    detailed: '每个分解事件不少于7句话，250字'
-};
-
 // Default memory settings
 const defaultMemorySettings = {
     source: 'google_openai', // 默认使用Google
-    detailLevel: 'normal', // 默认详细程度
     maxTokens: 8192, // 默认最大token数
     summaryFormat: `总结应当遵循以下原则：
 - 按时间顺序或逻辑顺序组织信息
@@ -61,7 +53,6 @@ const defaultMemorySettings = {
         messageCount: 6,  // 保留最近6层消息
         lastSummarizedFloor: 0  // 上次总结的楼层
     },
-    hideFloorsAfterSummary: false,  // 总结后隐藏楼层
     disableWorldInfoAfterVectorize: false  // 向量化后禁用世界书条目
 };
 
@@ -85,6 +76,21 @@ export class MemoryUI {
         this.isAutoSummarizing = false;  // 防止自动总结并发执行
         this.isCreatingWorldBook = false;  // 防止重复创建世界书
         this.lastResponseHash = null;  // 记录最后处理的响应哈希，防止重复处理
+
+        // 【性能核心：UI防抖更新引擎】
+        // 拦截高频瞬间爆发的事件，合并为单次极轻量刷新
+        this._uiUpdateTimer = null;
+        this._offsetSaveTimer = null;
+        this._activeTimers = new Set();
+        this._eventCallbacks = new Map(); // 存储 SillyTavern 全局事件回调，用于精确解绑
+        this.scheduleUIUpdate = () => {
+            if (this._uiUpdateTimer) clearTimeout(this._uiUpdateTimer);
+            this._uiUpdateTimer = setTimeout(() => {
+                this.updateChatFloorCount();
+                this.updateAutoSummarizeStatus();
+            }, 150); // 150ms 的绝佳黄金延迟
+            this._activeTimers.add(this._uiUpdateTimer);
+        };
     }
 
     async init() {
@@ -98,6 +104,9 @@ export class MemoryUI {
         
         // 初始化聊天楼层监控
         this.initializeChatFloorMonitor();
+        
+        // 初始化幽灵注入
+        this.updateGhostInjection();
     }
 
     /**
@@ -170,14 +179,84 @@ export class MemoryUI {
         // Prompt buttons removed - using preset format
 
         // Save config on input changes (包括API密钥)
-        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_detail_level, #memory_max_tokens, #memory_auto_create_world_book, #memory_hide_floors_after_summary, #memory_disable_world_info_after_vectorize')
+        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens')
             .off('change input').on('change input', () => this.saveApiConfig());
+
+        // 新UI元素输入事件
+        $('#memory_injection_depth').off('input').on('input', (e) => {
+            const value = parseInt(e.target.value) || 2;
+            extension_settings.vectors_enhanced.memory_injection_depth = value;
+            this.saveApiConfig();
+            this.updateGhostInjection();  // 更新幽灵注入
+        });
+
+        $('#memory_inject_count').off('input').on('input', (e) => {
+            const value = parseInt(e.target.value) || 10;
+            extension_settings.vectors_enhanced.memory_inject_count = value;
+            this.saveApiConfig();
+            this.updateGhostInjection();
+        });
+
+        $('#memory_retain_count').off('input').on('input', (e) => {
+            const value = parseInt(e.target.value) || 0;
+            extension_settings.vectors_enhanced.memory_retain_count = value;
+            this.saveApiConfig();
+        });
+
+        $('#memory_chunk_separator').off('input').on('input', (e) => {
+            const value = e.target.value || "===ARC_SPLIT===";
+            extension_settings.vectors_enhanced.memory_chunk_separator = value;
+            this.saveApiConfig();
+        });
 
         // Reset button for summary format
         $('#reset_memory_summary_format').off('click').on('click', () => this.resetSummaryFormat());
+        
+        // 新按钮事件预留
+        $('#memory_download_chunked').off('click').on('click', async () => {
+            const { extension_settings, getContext } = await import('../../../../../../extensions.js');
+            const context = getContext();
+            const chatId = context.chatId;
+            const chats = extension_settings.vectors_enhanced.chats?.[chatId] || [];
+            const texts = chats.map(item => item.text);
+            const separator = $('#memory_chunk_separator').val() || "===ARC_SPLIT===";
+            const content = texts.join(separator);
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${chatId}_chunked.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
 
-        // Vectorize summary button handler
-        $('#memory_vectorize_summary').off('click').on('click', () => this.vectorizeChatLore());
+        $('#memory_download_full').off('click').on('click', async () => {
+            const { extension_settings, getContext } = await import('../../../../../../extensions.js');
+            const context = getContext();
+            const chatId = context.chatId;
+            const chats = extension_settings.vectors_enhanced.chats?.[chatId] || [];
+            const texts = chats.map(item => item.text);
+            const content = texts.join('\n\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${chatId}_full.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        $('#memory_clear_buffer').off('click').on('click', async () => {
+            const { extension_settings, getContext } = await import('../../../../../../extensions.js');
+            const context = getContext();
+            const chatId = context.chatId;
+            if (extension_settings.vectors_enhanced.chats) {
+                extension_settings.vectors_enhanced.chats[chatId] = [];
+            }
+            this.saveSettingsDebounced?.() || window.saveSettingsDebounced?.();
+            this.toastr?.success('短时缓冲池已清空');
+            this.updateGhostInjection();  // 更新幽灵注入
+        });
         
         // Auto-summarize settings
         $('#memory_auto_summarize_enabled').off('change').on('change', (e) => {
@@ -185,35 +264,109 @@ export class MemoryUI {
             $('#memory_auto_summarize_settings').toggle(enabled);
             $('#memory_auto_summarize_status').toggle(enabled);
             if (enabled) {
-                // 初始化lastSummarizedFloor，确保有固定的基准点
-                const lastSummarized = this.getFromChatMetadata('lastSummarizedFloor');
-                if (!lastSummarized || lastSummarized === 0) {
+                let lastSummarized = this.getFromChatMetadata('lastSummarizedFloor');
+                if (lastSummarized === undefined || lastSummarized === null || lastSummarized === 0) {
                     const context = this.getContext ? this.getContext() : getContext();
                     const currentFloor = context?.chat?.length - 1 || 0;
-                    console.log('[MemoryUI] 初始化lastSummarizedFloor为当前楼层:', currentFloor);
-                    this.saveToChatMetadata('lastSummarizedFloor', currentFloor);
+                    this.saveToChatMetadata('lastSummarizedFloor', currentFloor + 1);
                 }
                 this.updateAutoSummarizeStatus();
             }
             this.saveApiConfig();
         });
         
-        $('#memory_auto_summarize_interval, #memory_auto_summarize_count')
+        $('#memory_auto_summarize_interval')
             .off('change input').on('change input', (e) => {
-                // 如果是保留数量输入框，确保最小值为1
-                if (e.target.id === 'memory_auto_summarize_count') {
-                    const value = parseInt(e.target.value) || 0;
-                    if (value < 1) {
-                        e.target.value = 1;
-                    }
-                }
                 this.updateAutoSummarizeStatus();
                 this.saveApiConfig();
             });
         
+        // UI视觉偏移量实时联动 (极致性能优化版)
+        this._offsetSaveTimer = null;
+        $('#memory_floor_offset').off('change input').on('input', () => {
+            // 1. 纯视图层：极其轻量，0延迟瞬间跟随按键刷新
+            this.updateChatFloorCount();
+            this.updateAutoSummarizeStatus();
+            
+            // 2. 数据持久层：防抖拦截，等用户完全停手 500 毫秒后才执行昂贵的深拷贝与落盘
+            if (this._offsetSaveTimer) clearTimeout(this._offsetSaveTimer);
+            this._offsetSaveTimer = setTimeout(() => {
+                this.saveApiConfig();
+            }, 500);
+            this._activeTimers.add(this._offsetSaveTimer);
+        });
+        
         // Reset auto-summarize button handler
         $('#memory_reset_auto_summarize').off('click').on('click', () => {
             this.resetAutoSummarize();
+        });
+        
+        // 一键提纯按钮绑定
+        $('#memory_force_auto_summarize').off('click').on('click', () => {
+            if (this.isAutoSummarizing) return this.toastr?.warning('提纯正在进行中，请稍候...');
+            const context = this.getContext ? this.getContext() : getContext();
+            if (!context || !context.chat || context.chat.length === 0) return this.toastr?.warning('当前无聊天记录！');
+            
+            const currentFloor = context.chat.length - 1;
+            const lastSummarized = this.getFromChatMetadata('lastSummarizedFloor') ?? 0;
+            const chats = extension_settings.vectors_enhanced.chats?.[context.chatId] || [];
+            if (currentFloor < lastSummarized && chats.length > 0) return this.toastr?.info('无新对话。');
+
+            this.isAutoSummarizing = true;
+            this.performAutoSummarize(currentFloor).catch(e => {
+                console.error('[MemoryUI] 强制提纯报错:', e);
+                this.isAutoSummarizing = false;
+            });
+        });
+
+        // Memory save edit button handler
+        $('#memory_save_edit').off('click').on('click', () => {
+            const context = this.getContext ? this.getContext() : getContext();
+            const chats = extension_settings.vectors_enhanced.chats?.[context.chatId];
+            
+            if (!chats || chats.length === 0) {
+                this.toastr?.warning('缓冲池为空，没有可覆写的记忆');
+                return;
+            }
+            
+            const editedText = $('#memory_output').val();
+            if (!editedText.trim()) {
+                this.toastr?.warning('内容不能为空');
+                return;
+            }
+            
+            chats[chats.length - 1].text = editedText;
+            
+            this.saveSettingsDebounced?.() || window.saveSettingsDebounced?.();
+            this.updateGhostInjection();
+            this.toastr?.success('最新记忆快照已成功覆写');
+        });
+
+        // 全量潜意识池覆写 (纯净数据版)
+        $('#memory_save_all_edits').off('click').on('click', () => {
+            const context = this.getContext ? this.getContext() : getContext();
+            const chatId = context.chatId;
+            const rawText = $('#memory_ghost_preview').val();
+            
+            if (!rawText.trim()) {
+                if (extension_settings.vectors_enhanced.chats) {
+                    extension_settings.vectors_enhanced.chats[chatId] = [];
+                }
+                this.saveSettingsDebounced?.() || window.saveSettingsDebounced?.();
+                this.updateGhostInjection();
+                return this.toastr?.success('潜意识池已清空！');
+            }
+            
+            // 直接以双回车切分，不用再费心清理头部标签了
+            const chunks = rawText.split(/[\r\n]{2,}/).map(t => t.trim()).filter(t => t.length > 0);
+            if (chunks.length === 0) return this.toastr?.warning('没有提取到有效的记忆！');
+
+            if (!extension_settings.vectors_enhanced.chats) extension_settings.vectors_enhanced.chats = {};
+            extension_settings.vectors_enhanced.chats[chatId] = chunks.map(text => ({ floor: 0, text: text }));
+            
+            this.saveSettingsDebounced?.() || window.saveSettingsDebounced?.();
+            this.updateGhostInjection();
+            this.toastr?.success('潜意识池已强制覆写并落盘！');
         });
 
         // 不在这里初始化API源显示，因为loadApiConfig已经处理了
@@ -275,25 +428,10 @@ export class MemoryUI {
             this.displayResponse(response);
             this.hideLoading();
             
-            // 只有有效响应且启用了自动生成才创建世界书
+            // 只有有效响应才继续后续逻辑
             if (response && response.trim().length >= 2) {
-                // 检查是否启用了自动创建世界书
-                const autoCreate = $('#memory_auto_create_world_book').prop('checked') || 
-                                  this.settings?.memory?.autoCreateWorldBook || false;
-                
-                if (autoCreate) {
-                    console.log('[MemoryUI] 自动创建世界书已启用，准备创建...');
-                    // 延迟一下确保UI已更新
-                    setTimeout(() => {
-                        console.log('[MemoryUI] 开始创建世界书...');
-                        this.createWorldBook().catch(error => {
-                            console.error('[MemoryUI] 自动创建世界书失败:', error);
-                            this.toastr?.error('自动创建世界书失败: ' + error.message);
-                        });
-                    }, 100);
-                } else {
-                    console.log('[MemoryUI] 自动创建世界书未启用');
-                }
+                // 自动创建世界书已移除
+                console.log('[MemoryUI] 自动创建世界书功能已移除，跳过此逻辑');
             }
         });
 
@@ -399,7 +537,7 @@ export class MemoryUI {
             
             // Get summary format and replace {{length}} macro
             let summaryFormat = $('#memory_summary_format').val() || this.settings.memory?.summaryFormat || defaultMemorySettings.summaryFormat;
-            const detailLevel = $('#memory_detail_level').val() || this.settings.memory?.detailLevel || defaultMemorySettings.detailLevel;
+            const detailLevel = this.settings?.memory?.detailLevel || defaultMemorySettings.detailLevel;
             summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel]);
 
             this.showLoading();
@@ -424,9 +562,6 @@ export class MemoryUI {
                 
                 if (result.success) {
                     this.toastr?.success(`已总结楼层 #${startIndex + 1} 至 #${endIndex + 1} 的内容`);
-                    
-                    // 检查是否需要隐藏楼层
-                    await this.hideFloorsIfEnabled(startIndex, endIndex, false);
                 }
             } catch (error) {
                 console.error('[MemoryUI] 总结失败:', error);
@@ -460,7 +595,7 @@ export class MemoryUI {
         
         // Get summary format and replace {{length}} macro
         let summaryFormat = $('#memory_summary_format').val() || this.settings.memory?.summaryFormat || defaultMemorySettings.summaryFormat;
-        const detailLevel = $('#memory_detail_level').val() || this.settings.memory?.detailLevel || defaultMemorySettings.detailLevel;
+        const detailLevel = this.settings?.memory?.detailLevel || defaultMemorySettings.detailLevel;
         summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel]);
 
         // Get UI settings - prompts removed, using preset format
@@ -554,6 +689,51 @@ export class MemoryUI {
         if (values.input !== undefined) {
             $('#memory_input').val(values.input);
         }
+    }
+
+    /**
+     * Update ghost injection using SillyTavern's extension_prompt mechanism
+     */
+    updateGhostInjection() {
+        const context = this.getContext ? this.getContext() : getContext();
+        const chatId = context.chatId;
+        
+        // 检查数据是否存在
+        const chats = extension_settings.vectors_enhanced?.chats?.[chatId];
+        const hasData = chats && chats.length > 0;
+        
+        // 检查主开关
+        const masterEnabled = extension_settings.vectors_enhanced?.master_enabled;
+        
+        if (!hasData || !masterEnabled) {
+            // 删除注入
+            delete window.extension_prompt?.['arc_short_term'];
+            delete window.extension_prompt_depth?.['arc_short_term'];
+            delete window.extension_prompt_roles?.['arc_short_term'];
+            $('#memory_ghost_preview').val('');
+            return;
+        }
+        
+        // 获取最后N条记录
+        const injectCount = extension_settings.vectors_enhanced?.memory_inject_count ?? 10;
+        const recentChats = chats.slice(-injectCount);
+        const texts = recentChats.map(item => item.text);
+        const injectionText = texts.join('\n\n');
+        
+        // 赋值给酒馆大模型的底层注入文本（带标签）
+        if (!window.extension_prompt) window.extension_prompt = {};
+        window.extension_prompt['arc_short_term'] = "【近期情境快照】\n" + injectionText;
+        
+        // 赋值给前端 UI 面板的文本（保持纯净，不带标签，方便用户编辑）
+        $('#memory_ghost_preview').val(injectionText);
+        
+        // 赋值注入深度
+        if (!window.extension_prompt_depth) window.extension_prompt_depth = {};
+        window.extension_prompt_depth['arc_short_term'] = parseInt($('#memory_injection_depth').val()) || 2;
+        
+        // 赋值注入角色
+        if (!window.extension_prompt_roles) window.extension_prompt_roles = {};
+        window.extension_prompt_roles['arc_short_term'] = 0; // 0代表作为System提示词
     }
 
 
@@ -723,12 +903,18 @@ export class MemoryUI {
         }
 
         // 直接保存到settings对象
+        // 校验 source：下拉框为空(null)或非法值时回退到 google_openai，防止写入脏数据
+        const selectedSource = $('#memory_api_source').val();
+        const source = (selectedSource === 'openai_compatible' || selectedSource === 'google_openai') ? selectedSource : 'google_openai';
+        if (selectedSource !== source) {
+            $('#memory_api_source').val(source);
+        }
         const memoryConfig = {
-            source: $('#memory_api_source').val(),
+            source: source,
             summaryFormat: $('#memory_summary_format').val() || defaultMemorySettings.summaryFormat,
-            detailLevel: $('#memory_detail_level').val() || defaultMemorySettings.detailLevel,
+            floorOffset: parseInt($('#memory_floor_offset').val()) || 0,
+            // detailLevel 已从UI绑定中移除，仅从 settings.memory.detailLevel 读取
             maxTokens: parseInt($('#memory_max_tokens').val()) || defaultMemorySettings.maxTokens,
-            autoCreateWorldBook: $('#memory_auto_create_world_book').prop('checked'),
             openai_compatible: {
                 url: $('#memory_openai_url').val(),
                 model: $('#memory_openai_model').val() || '',
@@ -746,9 +932,7 @@ export class MemoryUI {
                 messageCount: Math.max(1, parseInt($('#memory_auto_summarize_count').val()) || 1),
                 // 不再保存 lastSummarizedFloor 到全局设置，它现在存储在聊天元数据中
                 lastSummarizedFloor: this.settings?.memory?.autoSummarize?.lastSummarizedFloor || 0
-            },
-            hideFloorsAfterSummary: $('#memory_hide_floors_after_summary').prop('checked'),
-            disableWorldInfoAfterVectorize: $('#memory_disable_world_info_after_vectorize').prop('checked')
+            }
         };
         
         this.settings.memory = memoryConfig;
@@ -790,18 +974,41 @@ export class MemoryUI {
         const config = this.settings.memory;
 
         // 加载配置到UI
-        
-        $('#memory_api_source').val(config.source || 'google_openai');
+
+        // 校验 API 来源：只接受下拉框支持的合法值，非法值（如旧版的 'main' 或 null）统一回退到 google_openai，
+        // 并立即修正存档，避免下拉框空白、配置面板全部隐藏、总结时报"不支持的API源"。
+        const validSources = ['openai_compatible', 'google_openai'];
+        const source = validSources.includes(config.source) ? config.source : 'google_openai';
+        if (config.source !== source) {
+            config.source = source;
+            if (this.saveSettingsDebounced) {
+                this.saveSettingsDebounced();
+            }
+        }
+
+        $('#memory_api_source').val(source);
+        this.initializeApiSourceDisplay(source);
         $('#memory_summary_format').val(config.summaryFormat || defaultMemorySettings.summaryFormat);
-        $('#memory_detail_level').val(config.detailLevel || defaultMemorySettings.detailLevel);
+        $('#memory_floor_offset').val(config.floorOffset || 0);
         $('#memory_max_tokens').val(config.maxTokens || defaultMemorySettings.maxTokens);
-        $('#memory_auto_create_world_book').prop('checked', config.autoCreateWorldBook || false);
         $('#memory_openai_url').val(config.openai_compatible?.url || '');
         $('#memory_openai_model').val(config.openai_compatible?.model || '');
         $('#memory_openai_api_key').val(config.openai_compatible?.apiKey || '');  // 从设置加载API密钥
         $('#memory_openai_proxy_mode').prop('checked', config.openai_compatible?.proxyMode || false);
         $('#memory_google_openai_model').val(config.google_openai?.model || '');
         $('#memory_google_openai_api_key').val(config.google_openai?.apiKey || '');  // 从设置加载API密钥
+        
+        // 读取新UI元素的值
+        const injectionDepth = extension_settings.vectors_enhanced?.memory_injection_depth ?? 2;
+        const injectCount = extension_settings.vectors_enhanced?.memory_inject_count ?? 10;
+        const retainCount = extension_settings.vectors_enhanced?.memory_retain_count ?? 0;
+        const chunkSeparator = extension_settings.vectors_enhanced?.memory_chunk_separator ?? "===ARC_SPLIT===";
+        
+        // 赋值给DOM
+        $('#memory_injection_depth').val(injectionDepth);
+        $('#memory_inject_count').val(injectCount);
+        $('#memory_retain_count').val(retainCount);
+        $('#memory_chunk_separator').val(chunkSeparator);
         
         // Auto-summarize settings
         if (config.autoSummarize) {
@@ -814,17 +1021,6 @@ export class MemoryUI {
                 this.updateAutoSummarizeStatus();
             }
         }
-        
-        // Hide floors setting
-        $('#memory_hide_floors_after_summary').prop('checked', config.hideFloorsAfterSummary || false);
-        
-        // Disable world info after vectorize setting
-        $('#memory_disable_world_info_after_vectorize').prop('checked', config.disableWorldInfoAfterVectorize || false);
-        
-        // Prompts loading removed - using preset format
-
-        // 更新UI显示
-        this.initializeApiSourceDisplay(config.source || 'google_openai');
     }
 
     /**
@@ -1072,48 +1268,58 @@ export class MemoryUI {
         
         // 监听SillyTavern的消息事件
         if (this.eventSource && this.event_types) {
-            // 监听消息发送事件
-            this.eventSource.on(this.event_types.MESSAGE_SENT, () => {
-                setTimeout(() => this.updateChatFloorCount(), 100);
-            });
-            
-            // 监听消息接收事件
-            this.eventSource.on(this.event_types.MESSAGE_RECEIVED, () => {
+            // 保存回调引用以便精确解绑
+            const onMessageSent = () => this.scheduleUIUpdate();
+            const onMessageReceived = () => {
+                this.scheduleUIUpdate();
+                // 确保 DOM 完全渲染、数据落盘后，再进行提纯判定
+                setTimeout(() => this.checkAutoSummarize(), 500);
+            };
+            const onMessageDeleted = () => this.scheduleUIUpdate();
+            const onMessageSwiped = () => this.scheduleUIUpdate();
+            const onChatChanged = () => {
                 setTimeout(() => {
-                    this.updateChatFloorCount();
-                    this.checkAutoSummarize();  // 检查是否需要自动总结
+                    this.migrateLastSummarizedFloor();
+                    this.scheduleUIUpdate();
+                    this.updateGhostInjection();
                 }, 100);
-            });
-            
-            // 监听消息删除事件
-            this.eventSource.on(this.event_types.MESSAGE_DELETED, () => {
-                setTimeout(() => this.updateChatFloorCount(), 100);
-            });
-            
-            // 监听消息编辑事件
-            this.eventSource.on(this.event_types.MESSAGE_EDITED, () => {
-                setTimeout(() => this.updateChatFloorCount(), 100);
-            });
-            
-            // 监听聊天切换事件
-            this.eventSource.on(this.event_types.CHAT_CHANGED, () => {
-                console.log('[MemoryUI] Chat changed event fired');
+            };
+            const onChatLoaded = () => {
                 setTimeout(() => {
-                    this.migrateLastSummarizedFloor();  // 执行迁移
-                    this.updateChatFloorCount();
-                    this.updateAutoSummarizeStatus();
+                    this.migrateLastSummarizedFloor();
+                    this.scheduleUIUpdate();
+                    this.updateGhostInjection();
                 }, 100);
-            });
+            };
+
+            this._eventCallbacks.set('MESSAGE_SENT', onMessageSent);
+            this._eventCallbacks.set('MESSAGE_RECEIVED', onMessageReceived);
+            this._eventCallbacks.set('MESSAGE_DELETED', onMessageDeleted);
+            if (this.event_types.MESSAGE_SWIPED) {
+                this._eventCallbacks.set('MESSAGE_SWIPED', onMessageSwiped);
+            }
+            this._eventCallbacks.set('CHAT_CHANGED', onChatChanged);
+            this._eventCallbacks.set('CHAT_LOADED', onChatLoaded);
+
+            // 1. 发送消息 (极速响应)
+            this.eventSource.on(this.event_types.MESSAGE_SENT, onMessageSent);
             
-            // 监听聊天加载事件
-            this.eventSource.on(this.event_types.CHAT_LOADED, () => {
-                console.log('[MemoryUI] Chat loaded event fired');
-                setTimeout(() => {
-                    this.migrateLastSummarizedFloor();  // 执行迁移
-                    this.updateChatFloorCount();
-                    this.updateAutoSummarizeStatus();
-                }, 100);
-            });
+            // 2. 接收完毕 (真/假流式的终极安全锚点)
+            this.eventSource.on(this.event_types.MESSAGE_RECEIVED, onMessageReceived);
+            
+            // 3. 删除消息 (触发时空修补)
+            this.eventSource.on(this.event_types.MESSAGE_DELETED, onMessageDeleted);
+            
+            // 4. 刷卡/滑动切换 (应对 Swipe 修改回复的场景)
+            if (this.event_types.MESSAGE_SWIPED) {
+                this.eventSource.on(this.event_types.MESSAGE_SWIPED, onMessageSwiped);
+            }
+            
+            // 5. 聊天切换
+            this.eventSource.on(this.event_types.CHAT_CHANGED, onChatChanged);
+            
+            // 6. 聊天加载
+            this.eventSource.on(this.event_types.CHAT_LOADED, onChatLoaded);
         }
     }
     
@@ -1130,23 +1336,21 @@ export class MemoryUI {
                 return;
             }
             
-            const chat = context.chat;
-            const totalMessages = chat.length;
-            
-            // 计算实际可见的消息数（排除系统消息）
-            const visibleMessages = chat.filter(msg => !msg.is_system).length;
-            
-            // 获取最新消息的楼层号（基于索引）
+            // O(1) 极速获取，彻底干掉遍历
+            const totalMessages = context.chat.length;
             const latestFloor = totalMessages > 0 ? totalMessages - 1 : 0;
             
-            // 显示格式：楼层 #N (共M条)
-            if (visibleMessages === totalMessages) {
-                floorElement.text(`楼层 #${latestFloor + 1} (共${totalMessages}条)`);
-            } else {
-                floorElement.text(`楼层 #${latestFloor + 1} (${visibleMessages}/${totalMessages}条)`);
+            // 视觉偏移逻辑
+            const offset = parseInt($('#memory_floor_offset').val()) || 0;
+            const baseFloor = latestFloor + 1;
+            let floorText = `楼层 #${baseFloor}`;
+            if (offset !== 0) {
+                floorText += ` → #${baseFloor + offset}`;
             }
             
-            // 添加颜色提示：如果消息数量较多
+            floorElement.text(`${floorText} (共${totalMessages}条)`);
+            
+            // 根据规模渲染颜色
             if (totalMessages > 100) {
                 floorElement.css('color', 'var(--warning)');
                 floorElement.attr('title', '消息数量较多，考虑总结部分内容以提高性能');
@@ -1157,7 +1361,6 @@ export class MemoryUI {
                 floorElement.css('color', 'var(--SmartThemeEmColor)');
                 floorElement.attr('title', '当前聊天楼层信息');
             }
-            
         } catch (error) {
             console.error('[MemoryUI] 更新聊天楼层失败:', error);
             $('#memory_chat_floor_count').text('错误');
@@ -1168,45 +1371,49 @@ export class MemoryUI {
      * Update auto-summarize status display
      */
     updateAutoSummarizeStatus() {
-        const interval = parseInt($('#memory_auto_summarize_interval').val()) || 20;
+        const interval = parseInt($('#memory_auto_summarize_interval').val()) || 6;
         const context = this.getContext ? this.getContext() : getContext();
-        
         if (!context || !context.chat) {
             $('#memory_next_auto_summarize_floor').text('-');
             return;
         }
-        
+
         const currentFloor = context.chat.length - 1;
-        const chatId = context.chatId || 'unknown';
-        
-        // 从聊天元数据获取lastSummarizedFloor
-        const lastSummarizedFromMeta = this.getFromChatMetadata('lastSummarizedFloor');
-        
-        // 如果元数据中没有值（说明从未总结过），使用0作为起始点
-        const lastSummarized = lastSummarizedFromMeta ?? 0;
-        
-        // 兼容性处理：如果lastSummarized为0，初始化为当前楼层
-        if (lastSummarized === 0 && this.settings?.memory?.autoSummarize?.enabled) {
-            console.log('[MemoryUI] updateAutoSummarizeStatus: 检测到lastSummarized为0，初始化为当前楼层', currentFloor);
-            this.saveToChatMetadata('lastSummarizedFloor', currentFloor);
-            const nextFloor = currentFloor + interval;
-            $('#memory_next_auto_summarize_floor').text(`#${nextFloor + 1}`);
-            return;
+        let lastSummarized = this.getFromChatMetadata('lastSummarizedFloor');
+
+        // 初始化：将基准点指向"下一句话"
+        if ((lastSummarized === undefined || lastSummarized === null) && this.settings?.memory?.autoSummarize?.enabled) {
+            lastSummarized = currentFloor + 1;
+            this.saveToChatMetadata('lastSummarizedFloor', lastSummarized);
         }
+        lastSummarized = lastSummarized ?? 0;
+
+        // 【新增：时空回溯自我修复】
+        // 如果用户删除了聊天记录，导致当前楼层被削减到了基准点之前
+        // 我们必须让系统自动"时光倒流"，将基准点强行拉回当前楼层的下一句，防止倒计时卡死
+        if (currentFloor < lastSummarized - 1) {
+            lastSummarized = currentFloor + 1;
+            this.saveToChatMetadata('lastSummarizedFloor', lastSummarized);
+        }
+
+        // 完美数学倒数：目标楼层 = 起点 + 间隔 - 1
+        const nextTriggerFloor = lastSummarized + interval - 1;
+        const messagesLeft = nextTriggerFloor - currentFloor;
         
-        // 简化后的计算逻辑：直接基于lastSummarized计算
-        const nextFloor = lastSummarized + interval;
-        
-        console.log('[MemoryUI] updateAutoSummarizeStatus:', {
-            chatId,
-            currentFloor,
-            interval,
-            lastSummarized,
-            nextFloor,
-            fromMetadata: this.getFromChatMetadata('lastSummarizedFloor')
-        });
-        
-        $('#memory_next_auto_summarize_floor').text(`#${nextFloor + 1}`);
+        // 视觉偏移逻辑
+        const offset = parseInt($('#memory_floor_offset').val()) || 0;
+        const baseTarget = nextTriggerFloor + 1;
+        let statusText = `目标 #${baseTarget}`;
+        if (offset !== 0) {
+            statusText += ` → #${baseTarget + offset}`;
+        }
+
+        if (messagesLeft > 0) {
+            statusText += ` (距下次 ${messagesLeft} 句)`;
+        } else {
+            statusText += ` (等待触发)`;
+        }
+        $('#memory_next_auto_summarize_floor').text(statusText);
     }
     
     /**
@@ -1214,25 +1421,15 @@ export class MemoryUI {
      */
     resetAutoSummarize() {
         const context = this.getContext ? this.getContext() : getContext();
-        
-        if (!context || !context.chat) {
-            this.toastr?.warning('无法重置：聊天上下文不可用');
-            return;
-        }
-        
+        if (!context || !context.chat) return this.toastr?.warning('无法重置：聊天上下文不可用');
         const currentFloor = context.chat.length - 1;
         
-        // 保存当前楼层作为新的基准点
-        console.log('[MemoryUI] 重置自动总结基准点为当前楼层:', currentFloor);
-        this.saveToChatMetadata('lastSummarizedFloor', currentFloor);
-        
-        // 更新UI显示
+        // 核心修复：重置的起点必须是下一句话，而不是当前这句话
+        this.saveToChatMetadata('lastSummarizedFloor', currentFloor + 1);
         this.updateAutoSummarizeStatus();
         
-        // 显示成功提示
-        const interval = parseInt($('#memory_auto_summarize_interval').val()) || 20;
-        const nextFloor = currentFloor + interval;
-        this.toastr?.success(`已重置！下次将在楼层 #${nextFloor + 1} 触发总结`);
+        const interval = parseInt($('#memory_auto_summarize_interval').val()) || 6;
+        this.toastr?.success(`已重置！重新倒数 ${interval} 句话后触发`);
     }
     
     /**
@@ -1240,93 +1437,30 @@ export class MemoryUI {
      */
     async checkAutoSummarize() {
         try {
-            // 检查主开关是否启用
-            if (!this.settings?.master_enabled) {
-                console.log('[MemoryUI] 主开关已禁用，跳过自动总结检查');
-                return;
-            }
-            
-            // 检查是否已有自动总结在进行中
-            if (this.isAutoSummarizing) {
-                console.log('[MemoryUI] 自动总结已在进行中，跳过本次触发');
-                return;
-            }
-            
-            // 检查是否启用自动总结
-            if (!this.settings?.memory?.autoSummarize?.enabled) {
-                console.log('[MemoryUI] 自动总结未启用');
-                return;
-            }
-            
+            if (!this.settings?.master_enabled || this.isAutoSummarizing || !this.settings?.memory?.autoSummarize?.enabled) return;
             const context = this.getContext ? this.getContext() : getContext();
-            if (!context || !context.chat || context.chat.length < 2) {
-                console.log('[MemoryUI] 聊天上下文不可用或消息太少');
-                return;
-            }
-            
+            if (!context || !context.chat || context.chat.length < 2) return;
+
             const currentFloor = context.chat.length - 1;
-            const interval = parseInt($('#memory_auto_summarize_interval').val()) || 20;
-            const keepCount = parseInt($('#memory_auto_summarize_count').val()) || 6;
-            // 从聊天元数据获取lastSummarizedFloor，默认为0
-            let lastSummarized = this.getFromChatMetadata('lastSummarizedFloor') ?? 0;
-            
-            // 兼容性处理：如果lastSummarized为0，说明是旧版本用户或新用户
-            // 初始化为当前楼层，避免立即触发
-            if (lastSummarized === 0) {
-                console.log('[MemoryUI] 检测到lastSummarized为0，初始化为当前楼层:', currentFloor);
-                this.saveToChatMetadata('lastSummarizedFloor', currentFloor);
-                lastSummarized = currentFloor;
-                // 初始化后本次不触发，等待下次检查
+            const interval = parseInt($('#memory_auto_summarize_interval').val()) || 6;
+            let lastSummarized = this.getFromChatMetadata('lastSummarizedFloor');
+
+            if (lastSummarized === undefined || lastSummarized === null) {
+                lastSummarized = currentFloor + 1;
+                this.saveToChatMetadata('lastSummarizedFloor', lastSummarized);
                 return;
             }
-            
-            console.log('[MemoryUI] 自动总结检查:', {
-                currentFloor,
-                interval,
-                keepCount,
-                lastSummarized,
-                enabled: this.settings?.memory?.autoSummarize?.enabled
-            });
-            
-            // 简化后的触发条件：直接基于lastSummarized计算
-            const nextTriggerFloor = lastSummarized + interval;
-            
-            // 当前楼层必须达到或超过下次触发楼层才触发
-            if (currentFloor < nextTriggerFloor) {
-                console.log('[MemoryUI] 未达到触发楼层，不触发', {
-                    currentFloor,
-                    lastSummarized,
-                    nextTriggerFloor,
-                    interval,
-                    needMore: nextTriggerFloor - currentFloor
-                });
-                return;
-            }
-            
-            // 检查最新消息是否为AI回复
+
+            const nextTriggerFloor = lastSummarized + interval - 1;
+            if (currentFloor < nextTriggerFloor) return;
+
             const latestMessage = context.chat[currentFloor];
-            if (!latestMessage || latestMessage.is_user) {
-                console.log('[MemoryUI] 最新消息不是AI回复，不触发');
-                return;
-            }
-            
-            console.log('[MemoryUI] 触发自动总结:', {
-                currentFloor,
-                interval,
-                keepCount,
-                lastSummarized,
-                nextTriggerFloor
-            });
-            
-            // 设置标志，防止并发执行
+            if (!latestMessage || latestMessage.is_user) return;
+
             this.isAutoSummarizing = true;
-            
-            // 执行自动总结
-            await this.performAutoSummarize(currentFloor, keepCount);
-            
+            await this.performAutoSummarize(currentFloor);
         } catch (error) {
             console.error('[MemoryUI] 自动总结检查失败:', error);
-            // 如果检查过程出错，也要清除标志
             this.isAutoSummarizing = false;
         }
     }
@@ -1334,208 +1468,84 @@ export class MemoryUI {
     /**
      * Perform auto-summarization
      */
-    async performAutoSummarize(currentFloor, keepCount) {
+    async performAutoSummarize(currentFloor) {
         try {
-            console.log('[MemoryUI] performAutoSummarize 开始执行', { currentFloor, keepCount });
-            
-            // 导入必要的函数和工具
             const { extension_settings, getContext } = await import('../../../../../../extensions.js');
-            const { getMessages } = await import('../../utils/chatUtils.js');
             const { extractTagContent } = await import('../../utils/tagExtractor.js');
-            
             const settings = extension_settings.vectors_enhanced;
             const context = getContext();
             
-            // 检查主开关是否启用
-            if (!settings.master_enabled) {
-                console.log('[MemoryUI] 主开关已禁用，跳过自动总结');
-                return;
-            }
+            if (!settings.master_enabled) return;
+            this.toastr?.info('开始记忆提纯...');
             
-            this.toastr?.info('开始自动总结...');
-            
-            // 获取标签提取规则（如果有的话）
             const rules = settings.tag_extraction_rules || [];
-            
-            // 确保保留数量至少为1
-            const actualKeepCount = Math.max(1, keepCount);
-            
-            // 计算要总结的范围
-            // currentFloor是当前楼层（从0开始）
-            // actualKeepCount是要保留的层数
-            // 上次总结的位置（从聊天元数据获取）
-            const lastSummarized = this.getFromChatMetadata('lastSummarizedFloor') ?? 0;
-            
-            // 总结范围：从上次总结位置开始，到当前楼层-保留数量
-            const startIndex = lastSummarized;
-            const endIndex = currentFloor - actualKeepCount;
-            
-            if (endIndex <= startIndex) {
-                console.log('[MemoryUI] 消息数量不足，无需总结');
-                this.toastr?.warning('消息数量不足，无需总结');
-                return;
+            let lastSummarized = this.getFromChatMetadata('lastSummarizedFloor') ?? 0;
+            const chats = settings.chats?.[context.chatId] || [];
+            if (chats.length === 0 && lastSummarized >= currentFloor) {
+                const interval = parseInt($('#memory_auto_summarize_interval').val()) || 6;
+                lastSummarized = Math.max(0, currentFloor - interval + 1);
             }
+            const startIndex = lastSummarized;
+            const endIndex = currentFloor; // 完美切片
             
-            // 收集要总结的AI消息
-            const aiMessages = [];
+            if (endIndex < startIndex) return this.toastr?.warning('没有新的对话需要提纯');
             
-            // 从startIndex开始，到endIndex结束（包含），收集所有AI消息
+            const chatMessages = [];
             for (let i = startIndex; i <= endIndex; i++) {
                 const msg = context.chat[i];
-                if (msg && !msg.is_user && !msg.is_system) {
-                    // 这是AI消息
-                    aiMessages.push({
-                        ...msg,
-                        index: i
-                    });
-                }
+                if (msg && !msg.is_system) chatMessages.push({ ...msg, index: i });
             }
+            if (chatMessages.length === 0) return;
             
-            console.log('[MemoryUI] 收集到的AI消息数量:', aiMessages.length);
-            
-            if (aiMessages.length === 0) {
-                console.log('[MemoryUI] 没有找到AI消息');
-                this.toastr?.warning('没有找到足够的AI消息进行总结');
-                return;
-            }
-            
-            // 调试：显示收集到的消息
-            console.log('[MemoryUI] 收集到的AI消息详情:', aiMessages.map(msg => ({
-                index: msg.index,
-                hasText: !!msg.text,
-                hasMes: !!msg.mes,
-                textLength: (msg.text || '').length,
-                mesLength: (msg.mes || '').length
-            })));
-            
-            // 处理并格式化AI消息
-            const chatTexts = aiMessages.map(msg => {
-                // 获取消息文本（SillyTavern使用mes属性）
+            const chatTexts = chatMessages.map(msg => {
                 const messageText = msg.mes || msg.text || '';
-                
-                if (!messageText) {
-                    console.warn(`[MemoryUI] 楼层 #${msg.index + 1} 的AI消息为空`);
-                    return `#${msg.index + 1} [AI]: （空消息）`;
-                }
-                
-                // 对AI消息应用标签提取规则
+                if (!messageText) return `#${msg.index + 1} [${msg.is_user ? 'User' : 'AI'}]: （空消息）`;
                 const extractedText = extractTagContent(messageText, rules, this.settings.content_blacklist || []);
-                return `#${msg.index + 1} [AI]: ${extractedText}`;
+                return `#${msg.index + 1} [${msg.is_user ? 'User' : 'AI'}]: ${extractedText}`;
             }).join('\n\n');
             
-            // 添加楼层信息头部
-            const headerInfo = `【自动总结：楼层 #${startIndex + 1} 至 #${endIndex + 1}，共 ${aiMessages.length} 条AI消息】\n\n`;
-            const contentWithHeader = headerInfo + chatTexts;
+            const contentWithHeader = `【近期对话快照：楼层 #${startIndex + 1} 至 #${endIndex + 1}，共 ${chatMessages.length} 条消息】\n\n` + chatTexts;
             
-            // 调试：检查最终内容
-            console.log('[MemoryUI] 准备发送的内容长度:', contentWithHeader.length);
-            console.log('[MemoryUI] 内容预览:', contentWithHeader.substring(0, 200) + '...');
-            
-            // 获取API配置
             const apiSource = $('#memory_api_source').val();
             const apiConfig = this.getApiConfig();
-            let summaryFormat = $('#memory_summary_format').val() || this.settings.memory?.summaryFormat || defaultMemorySettings.summaryFormat;
-            const detailLevel = $('#memory_detail_level').val() || this.settings.memory?.detailLevel || defaultMemorySettings.detailLevel;
-            summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel]);
+            const summaryFormat = $('#memory_summary_format').val() || '';
+            const maxTokens = parseInt($('#memory_max_tokens').val()) || 8192;
             
-            // 临时存储楼层信息
-            this._tempFloorRange = { 
-                start: startIndex, 
-                end: endIndex, 
-                count: aiMessages.length,
-                isAutoSummarize: true,
-                isAIOnly: true  // 标记这是仅AI消息的总结
-            };
-            
-            console.log('[MemoryUI] 准备调用memoryService.sendMessage', {
-                contentLength: contentWithHeader.length,
-                apiSource,
-                apiConfig,
-                summaryFormat: summaryFormat.substring(0, 100) + '...',
-                hasApiKey: !!apiConfig.apiKey,
-                apiUrl: apiConfig.url || 'N/A'
-            });
-            
-            // 检查API配置
-            if (!apiConfig.apiKey && apiSource !== 'main_api') {
-                console.error('[MemoryUI] API密钥未设置');
-                this.toastr?.error('请先配置API密钥');
-                return;
-            }
-            
-            // 执行总结
-            console.log('[MemoryUI] 调用memoryService.sendMessage前');
-            const maxTokens = parseInt($('#memory_max_tokens').val()) || this.settings.memory?.maxTokens || defaultMemorySettings.maxTokens;
             const result = await this.memoryService.sendMessage(contentWithHeader, {
-                apiSource: apiSource,
-                apiConfig: apiConfig,
-                summaryFormat: summaryFormat,
-                maxTokens: maxTokens
+                apiSource, apiConfig, summaryFormat, maxTokens
             });
-            console.log('[MemoryUI] memoryService.sendMessage返回:', result);
             
             if (result && result.success) {
-                // 检查响应内容是否有效
                 const response = result.response || '';
+                if (!response || response.trim().length < 2) return this.toastr?.error('提纯失败：AI返回了空内容');
                 
-                // 检查是否为空或太短
-                if (!response || response.trim().length < 2) {
-                    console.error('[MemoryUI] 自动总结返回空内容');
-                    // 确保错误提示能显示
-                    setTimeout(() => {
-                        if (this.toastr) {
-                            this.toastr.error('自动总结失败：AI返回了空内容', '总结失败', {
-                                timeOut: 5000,
-                                extendedTimeOut: 2000,
-                                preventDuplicates: true
-                            });
-                        } else {
-                            alert('自动总结失败：AI返回了空内容');
-                        }
-                    }, 100);
-                    this.hideLoading();
-                    return;
-                }
-                
-                // 检查是否包含错误标记（常见的错误响应）
-                const errorKeywords = ['error', 'Error', 'ERROR', '错误', '失败', 'failed', 'Failed'];
-                const lowerResponse = response.toLowerCase();
-                const isError = errorKeywords.some(keyword => 
-                    lowerResponse.includes(keyword.toLowerCase()) && response.length < 100
-                );
-                
-                if (isError) {
-                    console.error('[MemoryUI] 自动总结可能返回了错误:', response);
-                    this.toastr?.warning('自动总结可能失败：' + response.substring(0, 50) + '...');
-                }
-                
-                // 更新最后总结的楼层为endIndex+1（下次从这里开始）
-                // 保存到聊天元数据而不是全局设置
                 this.saveToChatMetadata('lastSummarizedFloor', endIndex + 1);
                 
-                this.toastr?.success(`自动总结完成：楼层 #${startIndex + 1} 至 #${endIndex + 1}`);
-                this.updateAutoSummarizeStatus();
+                const chatId = context.chatId;
+                if (!extension_settings.vectors_enhanced.chats) extension_settings.vectors_enhanced.chats = {};
+                if (!extension_settings.vectors_enhanced.chats[chatId]) extension_settings.vectors_enhanced.chats[chatId] = [];
+                extension_settings.vectors_enhanced.chats[chatId].push({ floor: endIndex + 1, text: response });
                 
-                // 检查是否需要隐藏楼层
-                await this.hideFloorsIfEnabled(startIndex, endIndex, true);
+                // 检查本地最大保留数限制并自动清理旧快照
+                const retainCount = extension_settings.vectors_enhanced?.memory_retain_count ?? 0;
+                if (retainCount > 0 && extension_settings.vectors_enhanced.chats[chatId].length > retainCount) {
+                    const removeCount = extension_settings.vectors_enhanced.chats[chatId].length - retainCount;
+                    extension_settings.vectors_enhanced.chats[chatId].splice(0, removeCount);
+                }
+                
+                this.saveSettingsDebounced?.() || window.saveSettingsDebounced?.();
+                this.toastr?.success(`快照生成完毕：包含 ${chatMessages.length} 句话`);
+                this.updateAutoSummarizeStatus();
+                this.updateGhostInjection();
             } else {
-                // 处理失败情况
-                console.error('[MemoryUI] 自动总结返回失败:', result);
-                this.toastr?.error('自动总结失败：' + (result?.error || '未知错误'));
-                this.hideLoading();
+                this.toastr?.error('提纯失败：' + (result?.error || '未知错误'));
             }
-            
         } catch (error) {
-            console.error('[MemoryUI] 自动总结失败:', error);
-            console.error('[MemoryUI] 错误堆栈:', error.stack);
-            this.toastr?.error('自动总结失败: ' + error.message);
-            
-            // 如果失败了，也要显示加载完成
-            this.hideLoading();
+            console.error('[MemoryUI] 自动提纯失败:', error);
+            this.toastr?.error('自动提纯报错: ' + error.message);
         } finally {
-            // 无论成功还是失败，都要清除标志
             this.isAutoSummarizing = false;
-            console.log('[MemoryUI] 自动总结完成，清除并发标志');
+            this.hideLoading();
         }
     }
 
@@ -1545,89 +1555,7 @@ export class MemoryUI {
      * @param {number} endIndex - End index of AI messages
      * @param {boolean} isAutoSummarize - Whether this is from auto-summarize
      */
-    async hideFloorsIfEnabled(startIndex, endIndex, isAutoSummarize) {
-        try {
-            // 检查是否启用了隐藏楼层功能
-            const hideEnabled = $('#memory_hide_floors_after_summary').prop('checked');
-            if (!hideEnabled) {
-                console.log('[MemoryUI] 隐藏楼层功能未启用');
-                return;
-            }
-            
-            // 使用注入的依赖
-            const context = this.getContext();
-            
-            if (!context || !context.chat) {
-                console.error('[MemoryUI] 无法获取聊天上下文');
-                return;
-            }
-            
-            // 找出需要隐藏的消息范围
-            // 需要包含startIndex和endIndex之间的所有用户消息
-            let hideCount = 0;
-            const messagesToHide = [];
-            
-            // 遍历聊天记录，找出需要隐藏的消息
-            for (let i = 0; i < context.chat.length; i++) {
-                const msg = context.chat[i];
-                
-                // 如果是AI消息且在总结范围内
-                if (!msg.is_user && i >= startIndex && i <= endIndex) {
-                    messagesToHide.push(i);
-                }
-                
-                // 如果是用户消息且在总结范围内（包括边界）
-                // 例如：总结了5-10楼的AI消息，也要隐藏4-10之间的用户消息
-                if (msg.is_user && i >= Math.max(0, startIndex - 1) && i <= endIndex) {
-                    messagesToHide.push(i);
-                }
-            }
-            
-            console.log('[MemoryUI] 准备隐藏的消息索引:', messagesToHide);
-            
-            // 批量隐藏消息
-            for (const index of messagesToHide) {
-                context.chat[index].is_system = true;
-                hideCount++;
-            }
-            
-            if (hideCount > 0) {
-                // 保存聊天记录
-                if (this.saveChatConditional) {
-                    await this.saveChatConditional();
-                } else {
-                    console.error('[MemoryUI] saveChatConditional not available');
-                }
-                
-                // 触发UI更新
-                const eventSource = this.eventSource;
-                const event_types = this.event_types;
-                if (eventSource && event_types) {
-                    eventSource.emit(event_types.CHAT_CHANGED);
-                }
-                
-                // 重新加载当前聊天以立即显示隐藏标志
-                if (context.reloadCurrentChat && typeof context.reloadCurrentChat === 'function') {
-                    await context.reloadCurrentChat();
-                }
-                
-                // 更新隐藏消息信息显示
-                // 注意：这里可能需要在将来添加MessageUI的依赖注入
-                if (window.MessageUI && typeof window.MessageUI.updateHiddenMessagesInfo === 'function') {
-                    window.MessageUI.updateHiddenMessagesInfo();
-                } else {
-                    console.log('[MemoryUI] MessageUI.updateHiddenMessagesInfo not available');
-                }
-                
-                this.toastr?.info(`已隐藏 ${hideCount} 条消息`);
-                console.log(`[MemoryUI] 成功隐藏 ${hideCount} 条消息`);
-            }
-            
-        } catch (error) {
-            console.error('[MemoryUI] 隐藏楼层失败:', error);
-            this.toastr?.error('隐藏楼层失败: ' + error.message);
-        }
-    }
+
 
     /**
      * Reset summary format to default
@@ -1663,12 +1591,37 @@ export class MemoryUI {
     }
 
     destroy() {
-        // Unbind event listeners
+        // 【内存泄漏修复】清理所有活跃的定时器
+        this._activeTimers.forEach(timerId => clearTimeout(timerId));
+        this._activeTimers.clear();
+        if (this._uiUpdateTimer) {
+            clearTimeout(this._uiUpdateTimer);
+            this._uiUpdateTimer = null;
+        }
+        if (this._offsetSaveTimer) {
+            clearTimeout(this._offsetSaveTimer);
+            this._offsetSaveTimer = null;
+        }
+
+        // Unbind event listeners - 必须与绑定时使用完全一致的事件名
         $('#memory_summarize_btn').off('click');
         $('#memory_api_source').off('change');
-        $('#memory_vectorize_summary').off('click');
-        // Prompt buttons removed
-        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_detail_level, #memory_max_tokens').off('change');
+        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens').off('change input');
+        $('#memory_injection_depth').off('input');
+        $('#memory_inject_count').off('input');
+        $('#memory_retain_count').off('input');
+        $('#memory_chunk_separator').off('input');
+        $('#reset_memory_summary_format').off('click');
+        $('#memory_download_chunked').off('click');
+        $('#memory_download_full').off('click');
+        $('#memory_clear_buffer').off('click');
+        $('#memory_auto_summarize_enabled').off('change');
+        $('#memory_auto_summarize_interval').off('change input');
+        $('#memory_floor_offset').off('change input');
+        $('#memory_reset_auto_summarize').off('click');
+        $('#memory_force_auto_summarize').off('click');
+        $('#memory_save_edit').off('click');
+        $('#memory_save_all_edits').off('click');
 
         // Unsubscribe from events
         if (this.eventBus) {
@@ -1678,14 +1631,14 @@ export class MemoryUI {
             this.eventBus.off('memory:history-updated');
         }
         
-        // Unsubscribe from SillyTavern events
-        if (this.eventSource && this.event_types) {
-            this.eventSource.off(this.event_types.MESSAGE_SENT);
-            this.eventSource.off(this.event_types.MESSAGE_RECEIVED);
-            this.eventSource.off(this.event_types.MESSAGE_DELETED);
-            this.eventSource.off(this.event_types.MESSAGE_EDITED);
-            this.eventSource.off(this.event_types.CHAT_CHANGED);
-            this.eventSource.off(this.event_types.CHAT_LOADED);
+        // 【内存泄漏修复】使用保存的回调引用精确解绑 SillyTavern 全局事件，避免误拆其他监听器
+        if (this.eventSource && this.event_types && this._eventCallbacks) {
+            this._eventCallbacks.forEach((callback, eventName) => {
+                if (this.event_types[eventName]) {
+                    this.eventSource.off(this.event_types[eventName], callback);
+                }
+            });
+            this._eventCallbacks.clear();
         }
 
         this.initialized = false;

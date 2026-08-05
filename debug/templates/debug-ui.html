@@ -1,7 +1,29 @@
+<!--
+  调试工具面板 — 向量增强插件的内置诊断和修复界面
+
+  工具分类:
+    📊 状态分析  — 检查向量/内容选择/隐藏消息/系统完整性状态
+    🔄 同步检查  — 检查 UI 与设置的同步一致性，生成同步报告
+    📋 数据分析  — 分析文件/任务重复度，验证数据完整性
+    🧹 清理工具  — 批量清理缓存、向量数据、选择状态
+    🔍 检查工具  — 深度检查文件访问权限、向量完整性、世界信息可用性
+    🧪 测试工具  — 测试斜杠命令、功能完整性、性能压力
+    ⚙️ 高级工具  — 性能指标分析、使用模式、数据流图、设置备份
+
+  底部控制:
+    - 切换调试模式（开启/关闭 verbose logging）
+    - 调试状态信息显示
+    - 清空/复制调试信息
+
+  所有按钮通过事件委托绑定到 debug/ui-manager.js 中的对应处理函数。
+-->
+
 <div id="vectors-debug-panel" class="vectors-enhanced-section">
   <h3 style="color: var(--SmartThemeQuoteColor);">🔧 调试工具面板</h3>
   
-  <!-- 状态分析工具 -->
+  <!-- ============================================================
+       状态分析工具 — 检查各种插件状态的完整性和一致性
+       ============================================================ -->
   <details class="debug-section" data-section="state">
     <summary><strong>📊 状态分析</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -24,7 +46,9 @@
     </div>
   </details>
   
-  <!-- 同步检查工具 -->
+  <!-- ============================================================
+       同步检查工具 — 检测设置对象与 UI 显示的一致性
+       ============================================================ -->
   <details class="debug-section" data-section="sync">
     <summary><strong>🔄 同步检查</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -47,7 +71,9 @@
     </div>
   </details>
   
-  <!-- 数据分析工具 -->
+  <!-- ============================================================
+       数据分析工具 — 检查文件/任务数据的重复和完整性
+       ============================================================ -->
   <details class="debug-section" data-section="data">
     <summary><strong>📋 数据分析</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -70,7 +96,10 @@
     </div>
   </details>
   
-  <!-- 清理工具 -->
+  <!-- ============================================================
+       清理工具 — 批量清理缓存、向量数据、选择状态
+       注意: 这些操作可能不可逆，使用前确认
+       ============================================================ -->
   <details class="debug-section" data-section="cleanup">
     <summary><strong>🧹 清理工具</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -107,7 +136,9 @@
     </div>
   </details>
   
-  <!-- 检查工具 -->
+  <!-- ============================================================
+       检查工具 — 深度检测文件访问/向量完整性/世界信息可用性
+       ============================================================ -->
   <details class="debug-section" data-section="inspect">
     <summary><strong>🔍 检查工具</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -140,7 +171,9 @@
     </div>
   </details>
   
-  <!-- 测试工具 -->
+  <!-- ============================================================
+       测试工具 — 自动化功能/性能测试，生成测试报告
+       ============================================================ -->
   <details class="debug-section" data-section="test">
     <summary><strong>🧪 测试工具</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -163,7 +196,9 @@
     </div>
   </details>
   
-  <!-- 高级工具 -->
+  <!-- ============================================================
+       高级工具 — 性能/使用模式/数据流分析，设置备份
+       ============================================================ -->
   <details class="debug-section" data-section="advanced">
     <summary><strong>⚙️ 高级工具</strong></summary>
     <div class="flex-container m-t-0-5">
@@ -186,7 +221,9 @@
     </div>
   </details>
   
-  <!-- 调试控制 -->
+  <!-- ============================================================
+       调试控制 — 全局开关 + 信息面板 + 复制/清空操作
+       ============================================================ -->
   <div class="flex-container m-t-1" style="border-top: 1px dashed var(--SmartThemeQuoteColor); padding-top: 0.5rem;">
     <button id="debug_toggle_mode" class="menu_button menu_button_icon" title="切换调试模式">
       <i class="fa-solid fa-power-off"></i>
@@ -202,7 +239,10 @@
     </button>
   </div>
   
-  <!-- 调试信息显示区域 -->
+  <!-- ============================================================
+       调试信息显示区域 — 等宽字体 + 可滚动 + 复制按钮
+       默认隐藏，点击"显示调试状态"后展开
+       ============================================================ -->
   <div id="debug-info-panel" class="m-t-1" style="display: none;">
     <div style="border: 1px solid var(--SmartThemeQuoteColor); border-radius: 4px; padding: 0.5rem; font-family: monospace; font-size: 0.8em; max-height: 200px; overflow-y: auto;">
       <div id="debug-info-content">调试信息将显示在这里...</div>

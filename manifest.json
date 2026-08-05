@@ -1,13 +1,13 @@
 {
-  "display_name": "聊天记录超级管理器",
+  "display_name": "ArcFess",
   "loading_order": 5000,
   "requires": [],
   "optional": ["embeddings"],
-  "generate_interceptor": "vectors_rearrangeChat",
+  "generate_interceptor": "vectors_enhanced_rearrangeChat",
   "js": "index.js",
   "css": "style.css",
-  "author": "RaphllA",
-  "version": "1.2.8",
+  "author": "RaphllA&Jc_ker",
+  "version": "0.9",
   "homePage": "https://github.com/RaphllA/vectors-enhanced",
-  "description": "-具体更新内容查看文档"
+  "description": "基於RaphllA的插件修改而來，大幅提高性能，增加檢索準確度，目前仍處於測試階段。"
 }

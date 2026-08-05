@@ -41,7 +41,7 @@ export class DebugUIManager {
       // 从模板文件加载HTML，如果存在的话
       let debugHTML;
       try {
-        const response = await fetch('/scripts/extensions/third-party/vectors-enhanced/debug/templates/debug-ui.html');
+        const response = await fetch('/scripts/extensions/third-party/ArcFess/debug/templates/debug-ui.html');
         if (response.ok) {
           debugHTML = await response.text();
         }

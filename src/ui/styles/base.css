@@ -1,4 +1,8 @@
-/* Base styles and CSS variables for Vectors Enhanced */
+/* ============================================================
+   Base Styles & CSS Variables — Vectors Enhanced 设计系统基础
+   定义颜色变量、间距、圆角、工具类等全局设计令牌（Design Tokens）
+   所有变量映射到 SillyTavern 的主题变量，实现自适应换肤
+   ============================================================ */
 
 :root {
     /* Extension-specific CSS variables */

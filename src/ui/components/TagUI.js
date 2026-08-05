@@ -99,7 +99,7 @@ const displayTagSuggestions = (suggestions, scanStats) => {
 async function showTagExamples() {
   try {
     // 读取标签提取示例文件
-    const response = await fetch('/scripts/extensions/third-party/vectors-enhanced/标签提取示例.md');
+    const response = await fetch('/scripts/extensions/third-party/ArcFess/标签提取示例.md');
     if (!response.ok) {
       throw new Error('无法加载标签示例文件');
     }

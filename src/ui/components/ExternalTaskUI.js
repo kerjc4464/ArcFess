@@ -241,7 +241,19 @@ export class ExternalTaskUI {
                     continue;
                 }
 
-                const vectorizationTasks = tasks.filter(task => !task.type || task.type === 'vectorization');
+                // === 新增：过滤明显无效的 chatId ===
+                // 过滤掉已知无效ID模式（如 refresh、output 等临时ID）
+                if (/^(refresh|output|null|undefined)$/i.test(chatId)) {
+                    continue;
+                }
+                // 过滤掉异常合并ID（包含大量 _part 拼接的bug ID）
+                if ((chatId.match(/_part/g) || []).length > 5) {
+                    continue;
+                }
+                // === 新增结束 ===
+
+                // 只显示有实际向量数据的有效本地任务
+                const vectorizationTasks = tasks.filter(task => (!task.type || task.type === 'vectorization') && task.itemCount > 0);
 
                 if (vectorizationTasks.length > 0) {
                     let displayName = chatId; // Default fallback
@@ -350,7 +362,9 @@ export class ExternalTaskUI {
             // 直接从 settings.vector_tasks 获取任务
             const tasks = this.settings.vector_tasks[chatId] || [];
             // 旧格式的任务没有 type 字段，或者 type 为 'vectorization'
-            const vectorizationTasks = tasks.filter(t => !t.type || t.type === 'vectorization');
+            // === 新增：过滤掉没有实际向量数据的无效任务 ===
+            const vectorizationTasks = tasks.filter(t => (!t.type || t.type === 'vectorization') && t.itemCount > 0);
+            // === 新增结束 ===
 
             if (vectorizationTasks.length === 0) {
                 $('#source-tasks-list').html('<p>此聊天没有向量化任务</p>');
@@ -448,6 +462,14 @@ export class ExternalTaskUI {
                         console.error(`Source task ${taskId} not found`);
                         continue;
                     }
+
+                    // === 新增：验证源任务是否有实际向量数据 ===
+                    if (!sourceTask.itemCount || sourceTask.itemCount === 0) {
+                        console.warn(`Source task ${taskId} has no vector data, skipping`);
+                        skippedCount++;
+                        continue;
+                    }
+                    // === 新增结束 ===
 
                     // 检查是否已存在相同的外挂任务
                     const alreadyExists = currentTasks.some(t =>

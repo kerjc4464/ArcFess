@@ -59,6 +59,10 @@
   flex-direction: column;
 }
 
+.vectors-openai-settings {
+  flex-direction: column;
+}
+
 /* === Notification Settings === */
 .vectors-notification-details {
   margin-left: 1.5rem;

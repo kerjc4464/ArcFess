@@ -1,5 +1,9 @@
-/* Tag Suggestion and Display Styles */
+/* ============================================================
+   Tag Suggestion and Display Styles
+   标签建议下拉、标签展示、标签规则编辑器的样式
+   ============================================================ */
 
+/* === 标签建议下拉框（绝对定位弹出层） === */
 .tag-suggestion-box {
     position: absolute;
     background: var(--SmartThemeBlurColor);
@@ -8,10 +12,11 @@
     box-shadow: 0 4px 8px var(--vectors-enhanced-shadow);
     max-height: 200px;
     overflow-y: auto;
-    z-index: 1000;
+    z-index: 1000;                         /* 确保浮在其他 UI 之上 */
     min-width: 200px;
 }
 
+/* 下拉框中的每一项（标签名 + 使用次数） */
 .tag-suggestion-item {
     padding: var(--vectors-spacing-sm);
     cursor: pointer;
@@ -39,7 +44,7 @@
     margin-left: var(--vectors-spacing-sm);
 }
 
-/* Tag display */
+/* === 标签展示（内联标签徽章） === */
 .tag-display {
     display: inline-flex;
     align-items: center;
@@ -55,13 +60,15 @@
     color: var(--SmartThemeBlurColor);
 }
 
-/* Tag rules editor */
+/* === 标签规则编辑器 === */
+/* 规则编辑器外层容器 */
 .tag-rules-container {
     border: 1px solid var(--vectors-enhanced-border);
     border-radius: var(--vectors-radius-md);
     padding: var(--vectors-spacing-md);
 }
 
+/* 单条规则（模式 + 类型 + 操作按钮） */
 .tag-rule-item {
     display: flex;
     align-items: center;
@@ -72,12 +79,14 @@
     border-radius: var(--vectors-radius-sm);
 }
 
+/* 规则匹配模式文本（等宽字体） */
 .tag-rule-pattern {
     flex: 1;
     font-family: monospace;
     font-size: 0.9em;
 }
 
+/* 规则类型徽章（include/exclude） */
 .tag-rule-type {
     padding: 2px 8px;
     border-radius: var(--vectors-radius-sm);
@@ -95,7 +104,7 @@
     color: var(--vectors-enhanced-error);
 }
 
-/* Tag examples */
+/* === 标签示例展示 === */
 .tag-example-box {
     background: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--vectors-enhanced-border);
@@ -109,6 +118,7 @@
     font-size: 0.9em;
 }
 
+/* 示例中的标签名称高亮 */
 .tag-example-tag {
     font-weight: bold;
     color: var(--vectors-enhanced-primary);

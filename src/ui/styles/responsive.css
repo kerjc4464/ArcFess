@@ -1,4 +1,7 @@
-/* Responsive Design and Media Queries */
+/* ============================================================
+   Responsive Design and Media Queries
+   响应式断点：手机→平板→桌面 / 暗色模式 / 减弱动画 / 高对比度
+   ============================================================ */
 
 /* Mobile devices (max-width: 600px) */
 @media screen and (max-width: 600px) {

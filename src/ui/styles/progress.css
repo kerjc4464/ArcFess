@@ -1,13 +1,23 @@
-/* Progress and Status Display Styles */
+/* ============================================================
+   Progress and Status Display Styles
+   进度条、状态消息（info/success/warning/error）的样式
+   ============================================================ */
 
 /* Progress bar container */
 .vectors-enhanced-progress {
     display: none;
     margin-top: var(--vectors-spacing-lg);
+    width: 100%;
+    clear: both;
 }
 
 .vectors-enhanced-progress.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
 }
 
 .progress-bar {
@@ -17,6 +27,7 @@
     border-radius: var(--vectors-radius-lg);
     overflow: hidden;
     box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    flex-shrink: 0;
 }
 
 .progress-bar-inner {
@@ -36,10 +47,13 @@
 }
 
 .progress-text {
-    margin-top: var(--vectors-spacing-sm);
+    width: 100%;
+    margin-top: 0;
     font-size: 0.9em;
     color: var(--vectors-enhanced-text);
     text-align: center;
+    line-height: 1.4;
+    word-break: break-all;
 }
 
 /* Status messages */

@@ -1,9 +1,14 @@
-/* Content Selection Component Styles */
+/* ============================================================
+   Content Selection Component Styles
+   控制内容类型选择器（Chat/File/World Info）的样式
+   ============================================================ */
 
+/* === 内容类型分区 === */
 .content-type-section {
     margin: var(--vectors-spacing-sm) 0;
 }
 
+/* 内容类型展开面板——左侧带边框线的缩进区域 */
 .content-settings {
     margin-left: var(--vectors-spacing-xl);
     margin-top: var(--vectors-spacing-sm);
@@ -11,7 +16,8 @@
     border-left: 2px solid var(--vectors-enhanced-border);
 }
 
-/* File and World Info lists */
+/* === 文件和世界书列表 === */
+/* 可滚动的文件/世界书条目列表（最大高度 200px） */
 .file-list, 
 .wi-list {
     max-height: 200px;
@@ -22,6 +28,7 @@
     margin-bottom: var(--vectors-spacing-sm);
 }
 
+/* 列表中的每个标签项（flex 布局，复选框 + 文本） */
 .file-list label,
 .wi-list label {
     display: flex;
@@ -31,13 +38,15 @@
     padding: var(--vectors-spacing-xs);
 }
 
+/* 鼠标悬浮时高亮行背景 */
 .file-list label:hover,
 .wi-list label:hover {
     background-color: var(--vectors-enhanced-secondary);
     border-radius: var(--vectors-radius-sm);
 }
 
-/* File group headers */
+/* === 文件分组头 === */
+/* 文件按来源（如不同角色）分组时显示的组标题 */
 .file-group-header {
     font-weight: bold;
     margin-top: var(--vectors-spacing-sm);
@@ -45,11 +54,13 @@
     color: var(--vectors-enhanced-primary);
 }
 
+/* 首组的 margin-top 重置（避免顶部多余空白） */
 .file-group-header:first-child {
     margin-top: 0;
 }
 
-/* Chat message list */
+/* === 聊天消息列表 === */
+/* 可滚动的聊天消息选择面板（300px 高度，垂直滚动） */
 .vectors-enhanced-chat-messages {
     border: 1px solid var(--vectors-enhanced-border);
     border-radius: var(--vectors-radius-sm);
@@ -59,19 +70,19 @@
     margin-bottom: var(--vectors-spacing-sm);
 }
 
+/* 自定义滚动条样式 */
 .vectors-enhanced-chat-messages::-webkit-scrollbar {
     width: 8px;
 }
-
 .vectors-enhanced-chat-messages::-webkit-scrollbar-track {
     background: transparent;
 }
-
 .vectors-enhanced-chat-messages::-webkit-scrollbar-thumb {
     background-color: var(--vectors-enhanced-secondary);
     border-radius: var(--vectors-radius-sm);
 }
 
+/* 每条消息的包裹标签——块级显示，可点击 */
 .vectors-enhanced-chat-messages label {
     display: block;
     margin-bottom: var(--vectors-spacing-sm);
@@ -81,12 +92,14 @@
     cursor: pointer;
 }
 
+/* 悬浮时高亮并切换颜色 */
 .vectors-enhanced-chat-messages label:hover {
     background: var(--vectors-enhanced-primary);
     color: var(--SmartThemeBlurColor);
 }
 
-/* Selection counts */
+/* === 选择计数 === */
+/* 实时显示各类型选中的条目数量 */
 .selection-count {
     font-size: 0.9em;
     color: var(--vectors-enhanced-primary);

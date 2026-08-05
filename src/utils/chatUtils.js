@@ -10,6 +10,24 @@ import { substituteParams } from '../../../../../../script.js';
 const logger = new Logger('chatUtils');
 
 /**
+ * 从消息文本中剥离附件内容
+ * SillyTavern 在用户发送文本类附件时，会把文件内容拼到 mes 前面，
+ * 并用 extra.fileLength 标记附件内容的长度。
+ * 原版 vectors 扩展使用相同逻辑（getTextWithoutAttachments）。
+ * 注意：此函数不调用 substituteParams，由调用方决定是否需要宏替换。
+ * @param {Object} msg SillyTavern 消息对象
+ * @returns {string} 剥离附件后的纯文本（未经 substituteParams 处理）
+ */
+export function getTextWithoutAttachments(msg) {
+    const fileLength = msg?.extra?.fileLength || 0;
+    const mes = msg?.mes || '';
+    if (fileLength > 0 && fileLength <= mes.length) {
+        return mes.substring(fileLength).trim();
+    }
+    return mes;
+}
+
+/**
  * 获取过滤后的消息列表
  * @param {Array} chat 聊天消息数组
  * @param {Object} options 过滤选项
@@ -107,9 +125,9 @@ function processMessage(msg, index, filters) {
         return null;
     }
 
-    // 返回处理后的消息对象
+    // 返回处理后的消息对象（剥离附件内容，避免将文件/图片数据混入向量化）
     return {
-        text: substituteParams(msg.mes),
+        text: substituteParams(getTextWithoutAttachments(msg)),
         index: index,
         is_user: msg.is_user,
         is_system: msg.is_system === true,

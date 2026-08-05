@@ -55,7 +55,7 @@ export class SettingsPanel {
 
             // Use the same template loading logic as the original
             // Note: Using 'settings-modular' instead of 'settings' for the new modular template
-            const template = await this.renderExtensionTemplateAsync('third-party/vectors-enhanced', 'settings-modular');
+            const template = await this.renderExtensionTemplateAsync('third-party/ArcFess', 'settings-modular');
             $(this.targetSelector).append(template);
             this.templateLoaded = true;
             console.log('SettingsPanel: Template loaded and appended successfully');

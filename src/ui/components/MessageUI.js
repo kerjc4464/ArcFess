@@ -3,7 +3,7 @@
 import { getContext } from '../../../../../../extensions.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../../../../popup.js';
 import { parseTagWithExclusions, removeExcludedTags } from '../../utils/tagParser.js';
-import { getHiddenMessages } from '../../utils/chatUtils.js';
+import { getHiddenMessages, getTextWithoutAttachments } from '../../utils/chatUtils.js';
 import { extractTagContent } from '../../utils/tagExtractor.js';
 
 export const MessageUI = {
@@ -141,7 +141,7 @@ export const MessageUI = {
           const applyTagsToFirstMessage = chatSettings.apply_tags_to_first_message || false;
           
           if ((absoluteIndex === 0 && !applyTagsToFirstMessage) || msg.is_user === true) {
-            extractedText = msg.mes;
+            extractedText = getTextWithoutAttachments(msg);
           } else {
             extractedText = extractTagContent(msg.mes, rules, settings.content_blacklist || []);
           }
@@ -179,7 +179,7 @@ export const MessageUI = {
         if (!chatSettings.types.user && msg.is_user) return;
         if (!chatSettings.types.assistant && !msg.is_user) return;
 
-        const originalText = substituteParams(msg.mes);
+        const originalText = substituteParams(getTextWithoutAttachments(msg));
 
         for (const tagConfig of tags) {
           try {

@@ -15,6 +15,7 @@ export class RerankService {
         this.toastr = options.toastr || console;
         this.lastNotifyTime = 0;
         this.NOTIFICATION_COOLDOWN = 5000; // 5 seconds
+        this.isProcessing = false; // 初始化处理状态
     }
 
     /**
@@ -34,7 +35,13 @@ export class RerankService {
      * @returns {Promise<import('./RerankTypes.js').RerankItem[]>} Reranked results
      */
     async rerankResults(query, results) {
+        // 如果重排功能未开启、无结果，或者正在处理中，则直接返回原始结果
         if (!this.isEnabled() || results.length === 0) {
+            return results;
+        }
+
+        if (this.isProcessing) {
+            console.warn('Vectors: Rerank service busy, skipping duplicate request.');
             return results;
         }
 
@@ -42,6 +49,8 @@ export class RerankService {
         console.debug('Vectors: Reranking enabled. Starting rerank process...');
 
         try {
+            this.isProcessing = true; // 开启二次防御锁
+
             // Index results for tracking
             const indexedResults = results.map((result, index) => ({
                 ...result,
@@ -74,18 +83,20 @@ export class RerankService {
 
         } catch (error) {
             console.error('Vectors: Reranking failed. Falling back to original similarity search.', error);
-            
+
             // Clean up any rerank-related properties
             const cleanedResults = results.map(result => {
                 const { hybrid_score, rerank_score, original_score, _rerank_index, _rerank_success, ...originalResult } = result;
                 return originalResult;
             });
-            
+
             // Sort by original score
             cleanedResults.sort((a, b) => (b.score || 0) - (a.score || 0));
-            
+
             this.toastr.error('Rerank失败，使用原始搜索结果。');
             return cleanedResults;
+        } finally {
+            this.isProcessing = false; // 释放锁
         }
     }
 
@@ -115,14 +126,38 @@ export class RerankService {
      * @private
      */
     async _sendRerankRequest(config, requestBody) {
-        const response = await fetch(config.url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${config.apiKey}`
-            },
-            body: JSON.stringify(requestBody)
-        });
+        const useProxy = this.settings.rerank_use_proxy !== false;
+        let response;
+
+        if (useProxy) {
+            let proxyUrl = this.settings.thought_engine_proxy_url || `http://${window.location.hostname}:8999/rerank_proxy`;
+            if (proxyUrl.includes('127.0.0.1') && window.location.hostname !== '127.0.0.1') {
+                proxyUrl = proxyUrl.replace(/127\.0\.0\.1/g, window.location.hostname);
+            }
+            if (proxyUrl.includes('localhost') && window.location.hostname !== 'localhost') {
+                proxyUrl = proxyUrl.replace(/localhost/g, window.location.hostname);
+            }
+            proxyUrl = proxyUrl.replace(/\/thought_proxy$/, '/rerank_proxy');
+
+            response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: config.url,
+                    api_key: config.apiKey,
+                    ...requestBody
+                })
+            });
+        } else {
+            response = await fetch(config.url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${config.apiKey}`
+                },
+                body: JSON.stringify(requestBody)
+            });
+        }
 
         if (!response.ok) {
             throw new Error(`Rerank API failed: ${response.statusText}`);
@@ -144,29 +179,29 @@ export class RerankService {
 
         const rerankedResults = indexedResults.map((result, arrayIndex) => {
             let relevanceScore = 0;
-            
+
             // Try multiple matching methods
-            const rerankedResult = 
+            const rerankedResult =
                 // Method 1: Match by index field
                 rerankData.results.find(r => r.index === result._rerank_index) ||
                 // Method 2: Match by array position
                 rerankData.results[arrayIndex] ||
                 // Method 3: Use corresponding position if lengths match
                 (rerankData.results.length === indexedResults.length ? rerankData.results[arrayIndex] : null);
-            
+
             if (rerankedResult && typeof rerankedResult.relevance_score === 'number') {
                 relevanceScore = rerankedResult.relevance_score;
             } else if (rerankedResult && typeof rerankedResult.score === 'number') {
                 // Compatibility with APIs using 'score' instead of 'relevance_score'
                 relevanceScore = rerankedResult.score;
             }
-            
+
             // Calculate hybrid score
             const hybridScore = relevanceScore * hybridAlpha + result.score * (1 - hybridAlpha);
-            
+
             // Remove temporary index property
             const { _rerank_index, ...cleanResult } = result;
-            
+
             return {
                 ...cleanResult,
                 hybrid_score: hybridScore,
@@ -175,14 +210,14 @@ export class RerankService {
                 _rerank_success: relevanceScore > 0
             };
         });
-        
+
         // Sort by hybrid score
         rerankedResults.sort((a, b) => (b.hybrid_score || 0) - (a.hybrid_score || 0));
-        
+
         // Log statistics
         const successCount = rerankedResults.filter(r => r._rerank_success).length;
         console.debug(`Vectors: Rerank completed. ${successCount}/${rerankedResults.length} items successfully reranked`);
-        
+
         // Log top results for debugging
         console.debug('Vectors: Top 5 results after rerank:', rerankedResults.slice(0, 5).map((r, i) => ({
             index: i,
@@ -191,12 +226,12 @@ export class RerankService {
             original_score: r.original_score?.toFixed(4),
             text_preview: r.text?.substring(0, 50) + '...'
         })));
-        
+
         // Warn if no items were reranked successfully
         if (successCount === 0 && rerankedResults.length > 0) {
             console.warn('Vectors: No items were successfully reranked. API response format may be incompatible.');
         }
-        
+
         return rerankedResults;
     }
 
@@ -239,12 +274,12 @@ export class RerankService {
     limitResults(results, maxResults) {
         const config = this.config.getConfig();
         const finalLimit = Math.min(config.top_n, maxResults);
-        
+
         if (results.length > finalLimit) {
             console.debug(`Vectors: Limiting final results from ${results.length} to ${finalLimit}`);
             return results.slice(0, finalLimit);
         }
-        
+
         return results;
     }
 }
