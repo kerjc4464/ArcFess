@@ -4,7 +4,7 @@
 
 ![SillyTavern Plugin](https://img.shields.io/badge/Frontend-SillyTavern_Plugin-blue?style=for-the-badge)
 ![Python Backend](https://img.shields.io/badge/Backend-Python_Flask-green?style=for-the-badge)
-![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg?style=for-the-badge)
+![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=for-the-badge)
 
 **为“深层情感陪伴”与“超长上下文”设计的个人记忆引擎方案**
 
@@ -77,7 +77,11 @@
 *   **Gemini / Deepseek**: 感谢作为核心 AI 协作者参与了本项目的无数次代码迭代与架构推演。
 
 **[开源协议]**
-遵从原项目社区声明，本项目采用 **CC-BY-NC 4.0（署名-非商业性使用）** 许可协议。
-*   允许自由下载、修改并在个人环境中使用。
-*   禁止将其直接用于商业盈利目的。
-*   二次创作或分发时必须保留原作者署名。
+本项目采用 **GNU Affero General Public License v3.0 (AGPL-3.0)** 许可协议，详见 [`LICENSE`](LICENSE) 文件。
+
+*   **Copyright (C) 2025-2026 RaphllA & kerjc4464 (Jc_ker)** — 基于 [RaphllA/vectors-enhanced](https://github.com/RaphllA/vectors-enhanced) (原 Apache-2.0) 二次开发。
+*   允许自由使用、修改、分发及商业使用，但**必须开源**：若修改后通过网络提供服务（如部署后端 `vector_server.py`），须按 AGPL-3.0 第13条向用户提供完整对应源码。
+*   衍生作品须同样以 AGPL-3.0 分发，并保留版权与署名。
+*   历史版本（commit `670ad5f` 之前）在 CC BY-NC 4.0 下发布的内容仍受原协议约束，不可追溯变更。
+
+> **注意**：AGPL-3.0 允许商业使用，但禁止闭源网络服务；CC BY-NC 4.0 的“非商业性”限制已被移除。如需非 AGPL 的商业闭源授权，请联系作者另行协商。
