@@ -235,8 +235,27 @@ export class MemoryService {
      * @param {number} maxTokens - 最大token数
      * @returns {Promise<string>} AI响应
      */
+    _resolveProxyUrl(configProxyUrl) {
+        // 优先级：传入的 configProxyUrl > MemoryUI 默认 > 全局 thought_engine_proxy_url > 自动拼接
+        let proxyUrl = configProxyUrl
+            || this.dependencies?.settings?.proxy_url
+            || this.dependencies?.settings?.memory?.proxy_url
+            || window.extension_settings?.vectors_enhanced?.memory?.proxy_url
+            || window.extension_settings?.vectors_enhanced?.thought_engine_proxy_url
+            || this.dependencies?.settings?.thought_engine_proxy_url
+            || `http://${window.location.hostname}:8999/thought_proxy`;
+        // 兼容 127.0.0.1 / localhost 自动替换为当前主机名（与 ThoughtEngine/Rerank 保持一致）
+        if (proxyUrl.includes('127.0.0.1') && window.location.hostname !== '127.0.0.1') {
+            proxyUrl = proxyUrl.replace(/127\.0\.0\.1/g, window.location.hostname);
+        }
+        if (proxyUrl.includes('localhost') && window.location.hostname !== 'localhost') {
+            proxyUrl = proxyUrl.replace(/localhost/g, window.location.hostname);
+        }
+        return proxyUrl;
+    }
+
     async callOpenAICompatibleAPI(prompt, config, summaryFormat = '', maxTokens = 8192) {
-        const { url, apiKey, model, proxyMode } = config;
+        const { url, apiKey, model, proxyMode, use_backend_proxy, proxy_url } = config;
 
         if (!url || !apiKey) {
             throw new Error('请先配置API端点和密钥');
@@ -250,6 +269,7 @@ export class MemoryService {
             }
             apiUrl = apiUrl + '/chat/completions';
         }
+        const shouldUseBackendProxy = use_backend_proxy !== false;
 
         let timeoutId = null;
         try {
@@ -298,33 +318,51 @@ export class MemoryService {
                 content: 'doudou:我已经深刻学习上述纲领，并已经完成思考，接下来会直接输出总结内容：'
             });
 
-            // 根据是否启用反代模式决定请求头
-            const headers = {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            };
-            
-            // 如果是反代模式，不添加任何额外的头部（如 CSRF token）
-            // 否则，可能会包含 SillyTavern 的请求头
-            if (!proxyMode && typeof getRequestHeaders === 'function') {
-                // 获取标准请求头但移除 CSRF token
-                const standardHeaders = getRequestHeaders();
-                delete standardHeaders['X-CSRF-Token'];
-                Object.assign(headers, standardHeaders);
-            }
-            
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify({
-                    messages: messages,
+            let response;
+            // 优先走后端代理（解决 CORS，与 ThoughtEngine/Rerank 保持一致）
+            if (shouldUseBackendProxy) {
+                const proxyUrl = this._resolveProxyUrl(proxy_url);
+                console.log(`[OpenAI] 使用后端代理 ${proxyUrl} 转发至 ${apiUrl}`);
+                const proxyPayload = {
+                    url: apiUrl,
+                    api_key: apiKey,
                     model: model || 'gpt-3.5-turbo',
+                    messages: messages,
                     temperature: 1,
                     max_tokens: maxTokens,
-                    stream: false
-                }),
-                signal: controller.signal
-            });
+                    timeout: 150,
+                    verify_ssl: false
+                };
+                response = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(proxyPayload),
+                    signal: controller.signal
+                });
+            } else {
+                // 根据是否启用反代模式决定请求头（直连模式）
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                };
+                if (!proxyMode && typeof getRequestHeaders === 'function') {
+                    const standardHeaders = getRequestHeaders();
+                    delete standardHeaders['X-CSRF-Token'];
+                    Object.assign(headers, standardHeaders);
+                }
+                response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({
+                        messages: messages,
+                        model: model || 'gpt-3.5-turbo',
+                        temperature: 1,
+                        max_tokens: maxTokens,
+                        stream: false
+                    }),
+                    signal: controller.signal
+                });
+            }
             
             clearTimeout(timeoutId);
             timeoutId = null;
@@ -361,6 +399,10 @@ export class MemoryService {
             if (error.name === 'AbortError') {
                 console.error('[OpenAI] 请求超时');
                 throw new Error('API请求超时（150秒），请检查网络连接或稍后重试');
+            }
+            if (error.name === 'TypeError' && /load failed|failed to fetch|networkerror|network error/i.test(error.message)) {
+                console.error('[OpenAI] 网络错误:', error.message);
+                throw new Error(`网络请求失败(Load Failed)：无法连接到 ${apiUrl}。请检查：1)网络是否可访问该地址 2)是否需要开启“反代专用模式” 3)API地址是否填写正确。原始错误：${error.message}`);
             }
             console.error('[OpenAI] 调用失败:', error.message);
             console.error('[OpenAI] 错误详情:', error);
@@ -571,7 +613,7 @@ export class MemoryService {
      * @returns {Promise<string>} AI响应
      */
     async callGoogleViaOpenAI(prompt, config, summaryFormat = '', maxTokens = 8192) {
-        const { apiKey, model } = config;
+        const { apiKey, model, use_backend_proxy, proxy_url } = config;
 
         if (!apiKey) {
             throw new Error('请先配置Google API Key');
@@ -579,6 +621,7 @@ export class MemoryService {
 
         // 使用Google官方的OpenAI兼容端点
         const endpoint = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        const shouldUseBackendProxy = use_backend_proxy !== false;
 
         let timeoutId = null;
         try {
@@ -614,20 +657,42 @@ export class MemoryService {
             },
             ];
 
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
+            let response;
+            if (shouldUseBackendProxy) {
+                const proxyUrl = this._resolveProxyUrl(proxy_url);
+                console.log(`[Google via OpenAI] 使用后端代理 ${proxyUrl} 转发至 ${endpoint}`);
+                const proxyPayload = {
+                    url: endpoint,
+                    api_key: apiKey,
                     model: model || 'gemini-2.5-flash',
                     messages: messages,
                     temperature: 1,
-                    max_tokens: maxTokens
-                }),
-                signal: controller.signal
-            });
+                    max_tokens: maxTokens,
+                    timeout: 150,
+                    verify_ssl: false
+                };
+                response = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(proxyPayload),
+                    signal: controller.signal
+                });
+            } else {
+                response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: model || 'gemini-2.5-flash',
+                        messages: messages,
+                        temperature: 1,
+                        max_tokens: maxTokens
+                    }),
+                    signal: controller.signal
+                });
+            }
             
             clearTimeout(timeoutId);
 
@@ -663,6 +728,10 @@ export class MemoryService {
             if (error.name === 'AbortError') {
                 console.error('[Google via OpenAI] 请求超时');
                 throw new Error('API请求超时（150秒），请检查网络连接或稍后重试');
+            }
+            if (error.name === 'TypeError' && /load failed|failed to fetch|networkerror|network error/i.test(error.message)) {
+                console.error('[Google via OpenAI] 网络错误:', error.message);
+                throw new Error(`网络请求失败(Load Failed)：无法连接到 Google API。请检查：1)网络是否可直连 generativelanguage.googleapis.com（国内通常需代理）2)可切换为“OpenAI兼容格式”并填写可用中转地址 3)检查API Key是否正确。原始错误：${error.message}`);
             }
             console.error('[Google via OpenAI] 调用失败:', error.message);
             console.error('[Google via OpenAI] 错误详情:', error);

@@ -378,6 +378,8 @@ const settings = {
   // Memory management settings
   memory: {
     source: 'google_openai', // 默认使用 Google（与模板下拉选项一致，'main' 不是合法值）
+    use_backend_proxy: true, // 默认走后端代理解决 CORS
+    proxy_url: '',
     detailLevel: 'normal', // 默认详细程度
     maxTokens: 8192, // 默认最大token数
     google: {

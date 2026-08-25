@@ -283,7 +283,15 @@
           <details open style="margin-top: 10px;">
             <summary><strong>API配置</strong></summary>
             <div class="memory-api-section" style="margin-top: 10px;">
-              <label for="memory_api_source">
+              <label class="checkbox_label" for="memory_use_backend_proxy" title="通过 ArcFess /thought_proxy 后端代理转发（解决 CORS，支持本地 LLM）；关闭则前端直连（需端点有 CORS 头）">
+                <input id="memory_use_backend_proxy" type="checkbox" checked />
+                <span>通过 ArcFess 后端代理转发（推荐，解决 CORS）</span>
+              </label>
+              <div id="memory_proxy_url_section" style="margin-top: 5px;">
+                <label for="memory_proxy_url"><small>代理端点 URL (留空自动使用当前主机名:8999)</small></label>
+                <input id="memory_proxy_url" class="text_pole" type="text" placeholder="http://<host>:8999/thought_proxy" style="width: 100%;" />
+              </div>
+              <label for="memory_api_source" style="margin-top: 10px;">
                 <small>API 选择:</small>
               </label>
               <select id="memory_api_source" class="text_pole" style="width: 100%;">

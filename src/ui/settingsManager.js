@@ -1666,11 +1666,12 @@ export class SettingsManager {
   async initializeMemoryUI() {
     const { getContext, toastr } = this.dependencies;
     
-    // 创建记忆服务
+    // 创建记忆服务（传入 settings 以解析代理地址）
     this.memoryService = new MemoryService({
       getContext,
       eventBus,
-      getRequestHeaders: this.dependencies.getRequestHeaders
+      getRequestHeaders: this.dependencies.getRequestHeaders,
+      settings: this.settings
     });
     
     // 创建并初始化MemoryUI组件

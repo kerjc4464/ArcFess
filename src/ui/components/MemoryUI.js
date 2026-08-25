@@ -12,9 +12,19 @@ import { chat_metadata, saveChatDebounced } from '../../../../../../../script.js
 
 // Using preset format - prompts removed
 
+// Detail level configurations
+const detailLevels = {
+    concise: '每个分解事件不少于3句话，100字',
+    normal: '每个分解事件不少于5句话，150字',
+    detailed: '每个分解事件不少于7句话，250字'
+};
+
 // Default memory settings
 const defaultMemorySettings = {
     source: 'google_openai', // 默认使用Google
+    use_backend_proxy: true, // 默认走后端代理解决 CORS
+    proxy_url: '', // 代理地址留空自动使用当前主机名:8999
+    detailLevel: 'normal', // 默认详细程度
     maxTokens: 8192, // 默认最大token数
     summaryFormat: `总结应当遵循以下原则：
 - 按时间顺序或逻辑顺序组织信息
@@ -188,8 +198,16 @@ export class MemoryUI {
         // Prompt buttons removed - using preset format
 
         // Save config on input changes (包括API密钥)
-        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens')
+        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens, #memory_proxy_url')
             .off('change input').on('change input', () => this.saveApiConfig());
+
+        // 后端代理开关
+        $('#memory_use_backend_proxy').off('change').on('change', (e) => {
+            const enabled = e.target.checked;
+            $('#memory_proxy_url_section').toggle(enabled);
+            this.saveApiConfig();
+        });
+        $('#memory_proxy_url').off('change input').on('change input', () => this.saveApiConfig());
 
         // 新UI元素输入事件
         $('#memory_injection_depth').off('input').on('input', (e) => {
@@ -547,7 +565,7 @@ export class MemoryUI {
             // Get summary format and replace {{length}} macro
             let summaryFormat = $('#memory_summary_format').val() || this.settings.memory?.summaryFormat || defaultMemorySettings.summaryFormat;
             const detailLevel = this.settings?.memory?.detailLevel || defaultMemorySettings.detailLevel;
-            summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel]);
+            summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel] || detailLevels.normal);
 
             this.showLoading();
             
@@ -605,7 +623,7 @@ export class MemoryUI {
         // Get summary format and replace {{length}} macro
         let summaryFormat = $('#memory_summary_format').val() || this.settings.memory?.summaryFormat || defaultMemorySettings.summaryFormat;
         const detailLevel = this.settings?.memory?.detailLevel || defaultMemorySettings.detailLevel;
-        summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel]);
+        summaryFormat = summaryFormat.replace('{{length}}', detailLevels[detailLevel] || detailLevels.normal);
 
         // Get UI settings - prompts removed, using preset format
         const maxTokens = parseInt($('#memory_max_tokens').val()) || this.settings.memory?.maxTokens || defaultMemorySettings.maxTokens;
@@ -882,6 +900,8 @@ export class MemoryUI {
      */
     getApiConfig() {
         const source = $('#memory_api_source').val();
+        const useBackendProxy = $('#memory_use_backend_proxy').prop('checked');
+        const proxyUrl = $('#memory_proxy_url').val() || '';
 
         switch(source) {
             case 'openai_compatible':
@@ -889,15 +909,19 @@ export class MemoryUI {
                     url: $('#memory_openai_url').val(),
                     apiKey: $('#memory_openai_api_key').val(),
                     model: $('#memory_openai_model').val() || '',
-                    proxyMode: $('#memory_openai_proxy_mode').prop('checked') || false
+                    proxyMode: $('#memory_openai_proxy_mode').prop('checked') || false,
+                    use_backend_proxy: useBackendProxy,
+                    proxy_url: proxyUrl
                 };
             case 'google_openai':
                 return {
                     apiKey: $('#memory_google_openai_api_key').val(),
-                    model: $('#memory_google_openai_model').val() || ''
+                    model: $('#memory_google_openai_model').val() || '',
+                    use_backend_proxy: useBackendProxy,
+                    proxy_url: proxyUrl
                 };
             default:
-                return {};
+                return { use_backend_proxy: useBackendProxy, proxy_url: proxyUrl };
         }
     }
 
@@ -920,6 +944,8 @@ export class MemoryUI {
         }
         const memoryConfig = {
             source: source,
+            use_backend_proxy: $('#memory_use_backend_proxy').prop('checked'),
+            proxy_url: $('#memory_proxy_url').val() || '',
             detailLevel: this.settings?.memory?.detailLevel || 'normal', // 保留 detailLevel，防止重建对象时被抹掉
             summaryFormat: $('#memory_summary_format').val() || defaultMemorySettings.summaryFormat,
             floorOffset: parseInt($('#memory_floor_offset').val()) || 0,
@@ -995,6 +1021,13 @@ export class MemoryUI {
                 this.saveSettingsDebounced();
             }
         }
+
+        // 后端代理设置（默认 true，老存档兼容）
+        const useBackendProxy = config.use_backend_proxy !== undefined ? config.use_backend_proxy : true;
+        const proxyUrl = config.proxy_url || '';
+        $('#memory_use_backend_proxy').prop('checked', useBackendProxy);
+        $('#memory_proxy_url').val(proxyUrl);
+        $('#memory_proxy_url_section').toggle(useBackendProxy);
 
         $('#memory_api_source').val(source);
         this.initializeApiSourceDisplay(source);
@@ -1618,7 +1651,9 @@ export class MemoryUI {
         $('#memory_send_btn').off('click');
         $('#memory_input').off('keydown');
         $('#memory_api_source').off('change');
-        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens').off('change input');
+        $('#memory_openai_url, #memory_openai_api_key, #memory_openai_model, #memory_google_openai_api_key, #memory_google_openai_model, #memory_summary_format, #memory_max_tokens, #memory_proxy_url').off('change input');
+        $('#memory_use_backend_proxy').off('change');
+        $('#memory_proxy_url').off('change input');
         $('#memory_injection_depth').off('input');
         $('#memory_inject_count').off('input');
         $('#memory_retain_count').off('input');

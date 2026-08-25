@@ -42,7 +42,7 @@ except ImportError:
     print("Error: 未安装 faiss。请运行: pip install faiss-cpu")
     sys.exit(1)
 
-# === HanLP 中文分词器（懒加载，首次使用时初始化）===
+# === HanLP 中文分词器（懒加载，首次使用时初始化，强制CPU避免唤醒5090等N卡）===
 _hanlp_tokenizer = None
 
 def get_tokenizer():
@@ -50,25 +50,35 @@ def get_tokenizer():
     if _hanlp_tokenizer is None:
         try:
             import hanlp
-            _hanlp_tokenizer = hanlp.load(hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH)
-            logger.info(">>> [HanLP] 中文分词器加载完成")
+            # devices=-1 强制走CPU，不触发 CUDA/NVML，5090 sm_120也不受影响
+            _hanlp_tokenizer = hanlp.load(hanlp.pretrained.tok.FINE_ELECTRA_SMALL_ZH, devices=-1)
+            logger.info(">>> [HanLP] 中文分词器加载完成 (CPU模式)")
         except Exception as e:
             logger.warning(f">>> [HanLP] 加载失败，BM25 检索将不可用: {e}")
     return _hanlp_tokenizer
 
 def tokenize_for_fts(text):
-    tokenizer = get_tokenizer()
-    if tokenizer is None:
-        return text  # 降级：按原始文本存储
-    import re
-    tokens = tokenizer(text)
-    clean_tokens = []
-    for t in tokens:
-        t = t.strip()
-        # 过滤掉纯标点、纯空格、无意义字符 (如果 token 不包含任何字母、数字或汉字，则丢弃)
-        if t and not re.match(r'^[^\w\u4e00-\u9fa5]+$', t):
-            clean_tokens.append(t)
-    return ' '.join(clean_tokens)
+    if not text:
+        return ''
+    try:
+        tokenizer = get_tokenizer()
+        if tokenizer is None:
+            raise RuntimeError("tokenizer is None")
+        import re
+        tokens = tokenizer(text)
+        clean_tokens = []
+        for t in tokens:
+            t = t.strip()
+            # 过滤掉纯标点、纯空格、无意义字符 (如果 token 不包含任何字母、数字或汉字，则丢弃)
+            if t and not re.match(r'^[^\w\u4e00-\u9fa5]+$', t):
+                clean_tokens.append(t)
+        return ' '.join(clean_tokens) if clean_tokens else text
+    except Exception as e:
+        # encode_plus 等兼容性问题或模型损坏时，回退到正则简易分词，保证BM25不中断且不抛Insert Error
+        logger.warning(f">>> [HanLP] 分词失败，回退到简易分词: {e}")
+        import re
+        fallback = re.findall(r'[\w\u4e00-\u9fa5]+', text)
+        return ' '.join(fallback) if fallback else text
 
 # === Windows 控制台编码与缓冲修复 ===
 if sys.platform.startswith('win'):
