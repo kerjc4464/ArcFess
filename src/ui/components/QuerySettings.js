@@ -1,12 +1,13 @@
 /**
  * QuerySettings Component - Manages query-related settings including Rerank
- * 
+ *
  * Handles:
  * - Rerank enable/disable
  * - Rerank API configuration (URL, API Key, Model)
  * - Rerank parameters (Top N, Hybrid Alpha)
  * - Rerank notifications
  */
+import { resolveOpencodeSessionId, withOpencodeHeaders, withOpencodeProxyPayload } from '../../utils/opencodeSession.js';
 
 export class QuerySettings {
     constructor(dependencies = {}) {
@@ -588,30 +589,34 @@ export class QuerySettings {
         const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         try {
+            // OpenCode Go/Zen:测试连接用稳定 ID,重试复用;非 opencode 返回 undefined 双分支自动跳过。
+            const ocSessionId = resolveOpencodeSessionId(url, 'test-thought');
             let response;
             if (useProxy) {
+                const proxyPayload = {
+                    url: url,
+                    api_key: key,
+                    model: model || 'kimi-k2.6',
+                    messages: [{ role: 'user', content: testPrompt }],
+                    temperature: 0.1,
+                    max_tokens: 10,
+                    timeout: 15,
+                    verify_ssl: false
+                };
+                if (ocSessionId) withOpencodeProxyPayload(proxyPayload, url, ocSessionId);
                 response = await fetch(proxyUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        url: url,
-                        api_key: key,
-                        model: model || 'kimi-k2.6',
-                        messages: [{ role: 'user', content: testPrompt }],
-                        temperature: 0.1,
-                        max_tokens: 10,
-                        timeout: 15,
-                        verify_ssl: false
-                    }),
+                    body: JSON.stringify(proxyPayload),
                     signal: controller.signal
                 });
             } else {
                 response = await fetch(url, {
                     method: 'POST',
-                    headers: {
+                    headers: withOpencodeHeaders({
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${key}`
-                    },
+                    }, url, ocSessionId),
                     body: JSON.stringify({
                         model: model || 'kimi-k2.6',
                         messages: [{ role: 'user', content: testPrompt }],

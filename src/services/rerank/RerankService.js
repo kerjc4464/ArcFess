@@ -1,4 +1,5 @@
 import { RerankConfig } from './RerankConfig.js';
+import { resolveOpencodeSessionId, withOpencodeHeaders, withOpencodeProxyPayload } from '../../utils/opencodeSession.js';
 
 /**
  * Service class for handling document reranking
@@ -128,6 +129,9 @@ export class RerankService {
     async _sendRerankRequest(config, requestBody) {
         const useProxy = this.settings.rerank_use_proxy !== false;
         let response;
+        // Rerank 目标通常为 siliconflow rerank(非 opencode chat),此处条件加头:
+        // 仅当用户把 rerank 指向 opencode.ai/zen/go/v1 专线时才透传/加头,否则跳过(注明)。
+        const ocSessionId = resolveOpencodeSessionId(config.url, 'rerank');
 
         if (useProxy) {
             let proxyUrl = this.settings.thought_engine_proxy_url || `http://${window.location.hostname}:8999/rerank_proxy`;
@@ -139,22 +143,24 @@ export class RerankService {
             }
             proxyUrl = proxyUrl.replace(/\/thought_proxy$/, '/rerank_proxy');
 
+            const proxyPayload = {
+                url: config.url,
+                api_key: config.apiKey,
+                ...requestBody
+            };
+            if (ocSessionId) withOpencodeProxyPayload(proxyPayload, config.url, ocSessionId);
             response = await fetch(proxyUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    url: config.url,
-                    api_key: config.apiKey,
-                    ...requestBody
-                })
+                body: JSON.stringify(proxyPayload)
             });
         } else {
             response = await fetch(config.url, {
                 method: 'POST',
-                headers: {
+                headers: withOpencodeHeaders({
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${config.apiKey}`
-                },
+                }, config.url, ocSessionId),
                 body: JSON.stringify(requestBody)
             });
         }

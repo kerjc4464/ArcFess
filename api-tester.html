@@ -119,12 +119,26 @@ async function testAPI() {
 
   try {
     // ── 与 callLLM 一模一样的直调逻辑 ──
+    // OpenCode Go 专线:仅 opencode.ai/zen/go/v1 目标追加头(逻辑顺手加头,无 UI 改动)
+    const _dbgHeaders = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`
+    };
+    if (typeof url === 'string' && url.includes('opencode.ai/zen/go/v1')) {
+      try {
+        let _sid = null;
+        try { _sid = localStorage.getItem('arcfess_opencode_session_id') || null; } catch (e) {}
+        if (!_sid) {
+          _sid = 'arcfess-' + Math.random().toString(16).slice(2, 8) + Math.random().toString(16).slice(2, 8).slice(0, 6);
+          try { localStorage.setItem('arcfess_opencode_session_id', _sid); } catch (e) {}
+        }
+        _dbgHeaders['x-opencode-session'] = _sid || 'arcfess-debug';
+        _dbgHeaders['x-opencode-client'] = 'ArcFess';
+      } catch (e) { /* 调试页不阻塞主流程 */ }
+    }
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${key}`
-      },
+      headers: _dbgHeaders,
       body: JSON.stringify({ model, messages, temperature, max_tokens: maxTokens }),
       signal: controller.signal
     });

@@ -61,6 +61,9 @@ CLAUDE.md
 # Documentation
 docs/
 
+# OpenCode session fallback (runtime-generated local id, do not commit)
+.opencode_session_id
+
 # Backup and temporary folders
 vectors-enhanced-*change/
 *-backup/

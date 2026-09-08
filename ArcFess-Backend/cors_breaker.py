@@ -24,8 +24,50 @@ CORS 免疫反代网关——为浏览器前端提供无障碍的跨域 API 代�
 
 from flask import Flask, request, Response
 import requests
+import os
+import uuid
 
 app = Flask(__name__)
+
+# --- OpenCode Go/Zen 会话头集中注入 (与其他后端保持一致) ---
+# 仅当转发目标命中 opencode.ai/zen/go/v1 时加 x-opencode-session + x-opencode-client: ArcFess,其他原样。
+# session 优先用前端透传: JSON body.session_id > 请求头 x-opencode-session;缺失时用本文件旁持久化兜底。
+_OPENCODE_SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.opencode_session_id')
+_opencode_session_cache = None
+
+def _get_or_create_opencode_session_id():
+    global _opencode_session_cache
+    if _opencode_session_cache:
+        return _opencode_session_cache
+    try:
+        if os.path.isfile(_OPENCODE_SESSION_FILE):
+            with open(_OPENCODE_SESSION_FILE, 'r', encoding='utf-8') as f:
+                sid = (f.read() or '').strip()
+                if sid:
+                    _opencode_session_cache = sid
+                    return sid
+    except Exception:
+        pass
+    sid = f"arcfess-{uuid.uuid4().hex[:12]}"
+    try:
+        with open(_OPENCODE_SESSION_FILE, 'w', encoding='utf-8') as f:
+            f.write(sid)
+    except Exception:
+        pass
+    _opencode_session_cache = sid
+    return sid
+
+_OPENCODE_GO_PREFIX = 'opencode.ai/zen/go/v1'
+
+def _apply_opencode_headers(upstream_headers, target_url, session_id=None):
+    try:
+        if target_url and _OPENCODE_GO_PREFIX in str(target_url):
+            sid = (str(session_id).strip() if session_id else '') or _get_or_create_opencode_session_id()
+            upstream_headers['x-opencode-session'] = str(sid)
+            upstream_headers['x-opencode-client'] = 'ArcFess'
+    except Exception:
+        pass
+    return upstream_headers
 
 def add_cors_headers(response):
     """
@@ -77,13 +119,27 @@ def proxy_gemini():
     # 如果保留原始 Host，上游服务可能因主机名不匹配而拒绝请求
     headers = {key: value for key, value in request.headers if key.lower() != 'host'}
 
+    # OpenCode Go/Zen 集中加头:本网关默认目标为本地 127.0.0.1:7861,条件恒为假(注明跳过);
+    # 若未来目标改为 opencode.ai 则自动生效。session 优先取透传的 body.session_id / 原请求头。
+    try:
+        _body_sid = None
+        try:
+            _body_json = request.get_json(silent=True) or {}
+            _body_sid = _body_json.get('session_id')
+        except Exception:
+            _body_sid = None
+        _hdr_sid = request.headers.get('x-opencode-session') or request.headers.get('X-Opencode-Session')
+        _apply_opencode_headers(headers, target_url, _body_sid or _hdr_sid)
+    except Exception:
+        pass
+
     try:
         # 发出代理请求（同步，30 秒超时）
         # 如果你的 Jc-Server 需要挂系统级代理才能访问谷歌，请确保系统代理已开启，
         # 或者在代码里显式指定 proxies 参数
         resp = requests.post(
-            target_url, 
-            headers=headers, 
+            target_url,
+            headers=headers,
             data=request.get_data(),
             timeout=30
         )

@@ -7,7 +7,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "RaphllA&Jc_ker",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "homePage": "https://github.com/kerjc4464/ArcFess",
   "description": "基於RaphllA的插件修改而來，大幅提高性能，增加檢索準確度，目前仍處於測試階段。"
 }

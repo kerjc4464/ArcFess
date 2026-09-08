@@ -27,6 +27,7 @@ import requests
 import urllib.parse
 import socket
 import ipaddress
+import uuid
 from datetime import datetime
 
 # === 尝试加载依赖 ===
@@ -167,6 +168,47 @@ def _is_private_url(url):
 
     except Exception:
         return False
+
+# --- OpenCode Go 专线会话头集中注入 (照抄 ArcViGil scheduler.py 思路,但判定更严) ---
+# 背景: 2026-09-06 起 https://opencode.ai/zen/go/v1/* 强制要求 x-opencode-session,缺失 400 MissingSessionID。
+# 规则: 仅目标命中 opencode.ai/zen/go/v1 前缀时加 x-opencode-session + x-opencode-client: ArcFess,其他厂商和其他路径原样不动;
+# session 值优先用前端透传的 session_id (arcfess-{taskId} 稳定 ID,重试复用),无透传时用后端持久化兜底。
+_OPENCODE_SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.opencode_session_id')
+_opencode_session_cache = None
+
+def _get_or_create_opencode_session_id():
+    global _opencode_session_cache
+    if _opencode_session_cache:
+        return _opencode_session_cache
+    try:
+        if os.path.isfile(_OPENCODE_SESSION_FILE):
+            with open(_OPENCODE_SESSION_FILE, 'r', encoding='utf-8') as f:
+                sid = (f.read() or '').strip()
+                if sid:
+                    _opencode_session_cache = sid
+                    return sid
+    except Exception:
+        pass
+    sid = f"arcfess-{uuid.uuid4().hex[:12]}"
+    try:
+        with open(_OPENCODE_SESSION_FILE, 'w', encoding='utf-8') as f:
+            f.write(sid)
+    except Exception:
+        pass
+    _opencode_session_cache = sid
+    return sid
+
+_OPENCODE_GO_PREFIX = 'opencode.ai/zen/go/v1'
+
+def _apply_opencode_headers(upstream_headers, target_url, session_id=None):
+    try:
+        if target_url and _OPENCODE_GO_PREFIX in str(target_url):
+            sid = (str(session_id).strip() if session_id else '') or _get_or_create_opencode_session_id()
+            upstream_headers['x-opencode-session'] = str(sid)
+            upstream_headers['x-opencode-client'] = 'ArcFess'
+    except Exception:
+        pass
+    return upstream_headers
 
 def init_db():
     global HAS_JSON1
@@ -900,6 +942,8 @@ def thought_proxy():
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {api_key}'
             }
+        # OpenCode Go/Zen 集中加头:仅 opencode.ai/zen/go/v1 专线生效,其他厂商原样;不改 payload/超时/重试。
+        _apply_opencode_headers(upstream_headers, target_url, data.get('session_id'))
 
         try:
             resp = _thought_session.post(
@@ -960,18 +1004,23 @@ def rerank_proxy():
             logger.warning(f">>> [RerankProxy] Blocked request to private/loopback address: {target_url}")
             return jsonify({"error": "Target URL points to a private or internal address"}), 403
 
-        payload = {k: v for k, v in data.items() if k not in ('url', 'api_key', 'use_proxy')}
+        # session_id 仅用于后端加头,不透传给上游(避免污染 payload);其余字段保持原样转发。
+        payload = {k: v for k, v in data.items() if k not in ('url', 'api_key', 'use_proxy', 'session_id')}
         verify_ssl = data.get('verify_ssl', False)
         payload_size = len(json.dumps(payload).encode('utf-8'))
         logger.info(f">>> [RerankProxy] Forwarding to {target_url} | Payload: {payload_size} bytes")
 
+        rerank_headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
+        # OpenCode 集中加头:rerank 目标通常非 opencode(条件内自动跳过并注明),仅 Go 专线生效。
+        _apply_opencode_headers(rerank_headers, target_url, data.get('session_id'))
+
         try:
             resp = _rerank_session.post(
                 target_url,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {api_key}'
-                },
+                headers=rerank_headers,
                 json=payload,
                 timeout=60,
                 verify=verify_ssl

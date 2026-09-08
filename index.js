@@ -58,6 +58,7 @@ import { ProgressManager } from './src/ui/components/ProgressManager.js';
 import { EventManager } from './src/ui/EventManager.js';
 import { StateManager } from './src/ui/StateManager.js';
 import { getMessages, createVectorItem, getHiddenMessages, getTextWithoutAttachments } from './src/utils/chatUtils.js';
+import { resolveOpencodeSessionId, withOpencodeHeaders, withOpencodeProxyPayload } from './src/utils/opencodeSession.js';
 import { StorageAdapter } from './src/infrastructure/storage/StorageAdapter.js';
 import { VectorizationAdapter } from './src/infrastructure/api/VectorizationAdapter.js';
 import { eventBus } from './src/infrastructure/events/eventBus.instance.js';
@@ -2613,6 +2614,9 @@ async function rearrangeChat(chat, contextSize, abort, type) {
       const retryEnabled = settings.thought_engine_retry_enabled !== false;
       const maxRetries = retryEnabled ? Math.max(0, settings.thought_engine_retry_count ?? 3) : 0;
       const retryDelay = Math.max(100, settings.thought_engine_retry_delay ?? 1000);
+      // OpenCode Go/Zen: 稳定会话 ID,同一次 callLLM 的全部重试复用同一值 (label 即任务标签);
+      // 非 opencode 目标 resolve 返回 undefined,后续双分支自动跳过。
+      const ocSessionId = resolveOpencodeSessionId(apiUrl, label || model);
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const t0 = Date.now();
@@ -2638,6 +2642,8 @@ async function rearrangeChat(chat, contextSize, abort, type) {
               verify_ssl: false
             };
             if (reasoningEffort) reqBody.reasoning_effort = reasoningEffort;
+            // 代理分支:仅 opencode.ai/zen/go/v1 专线透传 session_id,后端 thought_proxy 集中加头;其他厂商不动 payload。
+            if (ocSessionId) withOpencodeProxyPayload(reqBody, apiUrl, ocSessionId);
 
             response = await fetch(proxyUrl, {
               method: 'POST',
@@ -2658,12 +2664,14 @@ async function rearrangeChat(chat, contextSize, abort, type) {
             };
             if (reasoningEffort) reqBody2.reasoning_effort = reasoningEffort;
 
+            // 直连分支:仅 opencode.ai/zen/go/v1 专线加 x-opencode-session + x-opencode-client,其他厂商原样。
+            const directHeaders = withOpencodeHeaders({
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            }, apiUrl, ocSessionId);
             response = await fetch(apiUrl, {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-              },
+              headers: directHeaders,
               body: JSON.stringify(reqBody2),
               signal: controller.signal
             });
@@ -5219,6 +5227,8 @@ async function callLlmAPI(prompt, apiType, apiUrl, apiKey, apiModel, systemPromp
       throw new Error('SillyTavern generateRaw function not found');
     }
   } else {
+    // 注:本函数为单分支(仅代理,无直连 fetch(apiUrl)),与 callLLM 的双分支不同;
+    // 代理集中加头足以覆盖 opencode.ai,前端仅透传 session_id。
     const proxyUrl = `http://${window.location.hostname}:8999/thought_proxy`;
     const messages = [];
     if (systemPrompt) {
@@ -5226,20 +5236,25 @@ async function callLlmAPI(prompt, apiType, apiUrl, apiKey, apiModel, systemPromp
     }
     messages.push({ role: 'user', content: prompt });
 
+    // OpenCode Go/Zen:层级记忆按聊天生成稳定 ID,重试/同窗复用;非 opencode 返回 undefined 不透传。
+    const hierSessionId = resolveOpencodeSessionId(apiUrl, 'hierarchical');
+    const hierPayload = {
+      url: apiUrl,
+      api_key: apiKey,
+      auth_type: 'bearer',
+      model: apiModel,
+      messages: messages,
+      temperature: 0.3,
+      max_tokens: 4096,
+      timeout: 90,
+      verify_ssl: false
+    };
+    if (hierSessionId) withOpencodeProxyPayload(hierPayload, apiUrl, hierSessionId);
+
     const response = await fetch(proxyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: apiUrl,
-        api_key: apiKey,
-        auth_type: 'bearer',
-        model: apiModel,
-        messages: messages,
-        temperature: 0.3,
-        max_tokens: 4096,
-        timeout: 90,
-        verify_ssl: false
-      })
+      body: JSON.stringify(hierPayload)
     });
 
     if (!response.ok) throw new Error(`API Error: HTTP ${response.status}`);

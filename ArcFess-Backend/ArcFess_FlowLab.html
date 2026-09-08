@@ -746,19 +746,32 @@ async function callLLM(promptText) {
   const targetUrl = document.getElementById('llmUrl').value.trim();
   const key = document.getElementById('apiKey').value.trim();
   const model = document.getElementById('llmModel').value.trim();
+  // OpenCode Go 专线手动工具透传:仅 opencode.ai/zen/go/v1 目标带 session_id(后端集中加头),其他不动;无 UI 改动。
+  let _ocSid = null;
+  if (typeof targetUrl === 'string' && targetUrl.includes('opencode.ai/zen/go/v1')) {
+    try {
+      _ocSid = localStorage.getItem('arcfess_opencode_session_id') || null;
+      if (!_ocSid) {
+        _ocSid = 'arcfess-' + Math.random().toString(16).slice(2, 8) + Math.random().toString(16).slice(2, 8).slice(0, 6);
+        try { localStorage.setItem('arcfess_opencode_session_id', _ocSid); } catch (e) {}
+      }
+    } catch (e) { _ocSid = _ocSid || 'arcfess-flowlab'; }
+  }
+  const _proxyBody = {
+    url: targetUrl,
+    api_key: key,
+    model: model,
+    messages: [{ role: 'user', content: promptText }],
+    temperature: 0.3,
+    max_tokens: 4096,
+    timeout: 90,
+    verify_ssl: false
+  };
+  if (_ocSid) _proxyBody.session_id = _ocSid;
   const res = await fetch(proxyUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      url: targetUrl,
-      api_key: key,
-      model: model,
-      messages: [{ role: 'user', content: promptText }],
-      temperature: 0.3,
-      max_tokens: 4096,
-      timeout: 90,
-      verify_ssl: false
-    })
+    body: JSON.stringify(_proxyBody)
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));

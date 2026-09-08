@@ -4,6 +4,7 @@
  */
 import { chat_metadata, saveMetadata } from '../../../../../../../script.js';
 import { createWorldInfoEntry, saveWorldInfo } from '../../../../../../world-info.js';
+import { resolveOpencodeSessionId, withOpencodeHeaders, withOpencodeProxyPayload } from '../../utils/opencodeSession.js';
 
 export class MemoryService {
     constructor(dependencies = {}) {
@@ -319,6 +320,8 @@ export class MemoryService {
             });
 
             let response;
+            // OpenCode Go/Zen:记忆总结按记忆单元复用稳定 ID,无单元 ID 时用持久化兜底;非 opencode 为 undefined。
+            const ocSessionId = resolveOpencodeSessionId(apiUrl, config?.taskId || config?.memoryId || 'memory');
             // 优先走后端代理（解决 CORS，与 ThoughtEngine/Rerank 保持一致）
             if (shouldUseBackendProxy) {
                 const proxyUrl = this._resolveProxyUrl(proxy_url);
@@ -333,6 +336,8 @@ export class MemoryService {
                     timeout: 150,
                     verify_ssl: false
                 };
+                // 代理分支:仅 opencode.ai/zen/go/v1 专线透传 session_id,后端集中加头;其他厂商不动 payload。
+                if (ocSessionId) withOpencodeProxyPayload(proxyPayload, apiUrl, ocSessionId);
                 response = await fetch(proxyUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -341,10 +346,11 @@ export class MemoryService {
                 });
             } else {
                 // 根据是否启用反代模式决定请求头（直连模式）
-                const headers = {
+                // 直连分支:仅 opencode.ai/zen/go/v1 专线追加 x-opencode-session + x-opencode-client,其他厂商原样。
+                const headers = withOpencodeHeaders({
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiKey}`
-                };
+                }, apiUrl, ocSessionId);
                 if (!proxyMode && typeof getRequestHeaders === 'function') {
                     const standardHeaders = getRequestHeaders();
                     delete standardHeaders['X-CSRF-Token'];
@@ -658,6 +664,9 @@ export class MemoryService {
             ];
 
             let response;
+            // 注:本 endpoint 硬编码为 Google OpenAI 兼容地址,正常永不命中 opencode.ai;
+            // 仍走同一条件函数以便未来可配 URL 时自动生效,当前对 Google 等效为"跳过加头"。
+            const ocSessionId2 = resolveOpencodeSessionId(endpoint, config?.taskId || 'memory-google');
             if (shouldUseBackendProxy) {
                 const proxyUrl = this._resolveProxyUrl(proxy_url);
                 console.log(`[Google via OpenAI] 使用后端代理 ${proxyUrl} 转发至 ${endpoint}`);
@@ -671,6 +680,7 @@ export class MemoryService {
                     timeout: 150,
                     verify_ssl: false
                 };
+                if (ocSessionId2) withOpencodeProxyPayload(proxyPayload, endpoint, ocSessionId2);
                 response = await fetch(proxyUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -680,10 +690,10 @@ export class MemoryService {
             } else {
                 response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: {
+                    headers: withOpencodeHeaders({
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${apiKey}`
-                    },
+                    }, endpoint, ocSessionId2),
                     body: JSON.stringify({
                         model: model || 'gemini-2.5-flash',
                         messages: messages,
