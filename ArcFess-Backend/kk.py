@@ -9,7 +9,7 @@
     2. 随机抽取 3 条记忆进行内容预览
 
 数据库连接:
-    使用 SQLite URI 格式打开只读连接（file:vectors.db?mode=ro），
+    使用 SQLite URI 格式打开只读连接（file://绝对路径/vectors.db?mode=ro），
     确保检查过程不会修改数据库内容。
 
 注意:
@@ -19,9 +19,11 @@
 
 import sqlite3
 import os
+from pathlib import Path
 
-# 目标数据库文件名——确保与 vector_server.py 中的 DB_FILE 一致
-DB_FILE = 'vectors.db'
+# 目标数据库路径——基于本文件所在目录解析，确保与 vector_server.py 中的 DB_PATH 指向同一文件
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(_BASE_DIR, 'vectors.db')
 
 def inspect():
     """
@@ -44,7 +46,8 @@ def inspect():
     #   file:{DB_FILE}?mode=ro  → SQLite 3.7+ 支持的 URI 语法
     #   uri=True               → 启用 URI 解析
     #   只读模式防止误修改，适合纯检查场景
-    conn = sqlite3.connect(f'file:{DB_FILE}?mode=ro', uri=True)
+    # 绝对路径转 file:// URI（as_uri 处理盘符/空格编码，Windows/macOS 通用），再加只读参数
+    conn = sqlite3.connect(f'{Path(DB_FILE).as_uri()}?mode=ro', uri=True)
     c = conn.cursor()
 
     print("========================================")

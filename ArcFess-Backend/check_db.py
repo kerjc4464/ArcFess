@@ -13,8 +13,11 @@
 
 import sqlite3
 import os
+from pathlib import Path
 
-# 鐩爣鏁版嵁搴撴枃浠跺悕鈥斺€旂‘淇濅笌 vector_server.py 涓殑 DB_FILE 涓€鑷?DB_FILE = 'vectors.db'
+# 目标数据库路径——基于本文件所在目录解析，确保与 vector_server.py 中的 DB_PATH 指向同一文件
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(_BASE_DIR, 'vectors.db')
 
 def inspect():
     """
@@ -32,7 +35,7 @@ def inspect():
     # 浣跨敤 URI 鏍煎紡鎵撳紑鍙杩炴帴:
     #   file:{DB_FILE}?mode=ro  鈫?SQLite 3.7+ 鏀寔鐨?URI 璇硶
     #   uri=True               鈫?鍚敤 URI 瑙ｆ瀽
-    #   鍙妯″紡闃叉璇慨鏀癸紝閫傚悎绾鏌ュ満鏅?    conn = sqlite3.connect(f'file:{DB_FILE}?mode=ro', uri=True)
+    #   鍙妯″紡闃叉璇慨鏀癸紝閫傚悎绾鏌ュ満鏅?    conn = sqlite3.connect(f'{Path(DB_FILE).as_uri()}?mode=ro', uri=True)
     c = conn.cursor()
 
     print("========================================")

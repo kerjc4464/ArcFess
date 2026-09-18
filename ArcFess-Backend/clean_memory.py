@@ -24,7 +24,9 @@ import sqlite3
 import os
 import shutil  # 注意：当前代码未直接使用 shutil，保留以备将来功能扩展
 
-DB_PATH = 'vectors.db'
+# 数据库路径基于本文件所在目录解析，不依赖启动时的 cwd（与 vector_server.py 指向同一文件）
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_BASE_DIR, 'vectors.db')
 
 def copy_with_progress(src, dst):
     """带进度条的大文件分块复制模块

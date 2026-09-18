@@ -68,6 +68,11 @@
 1. 刷新 SillyTavern 页面。
 2. 打开 ArcFess 插件设置面板，确保后端的 API 连接地址为 `http://127.0.0.1:8999`，确认连接成功即可开始体验。
 
+### 数据库路径与备份说明
+1. 后端数据库路径（`vector_server.py` / `clean_memory.py` / `kk.py` / `check_db.py`）已统一为**基于脚本所在目录的绝对路径**，不再依赖启动时的当前目录 —— 双击 `.bat`、IDE 或任意目录启动都指向同一个 `vectors.db`，不会误建空库。
+2. 旧版服务副本已归档至 `ArcFess-Backend/_archive_legacy_vector_server/`，仅作留存，请勿直接运行（会占用同一个 8999 端口）。
+3. 备份建议：先停止后端（确认 `vectors.db-wal` 为 0 字节、数据已落盘），再直接复制 `vectors.db` 即为一致快照；`clean_memory.py` 也会在清理前引导备份。
+
 ---
 
 ## ⚖️ 协议与鸣谢 (License & Credits)

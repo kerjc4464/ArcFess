@@ -98,7 +98,10 @@ logger = logging.getLogger("ArcFess")
 app = flask.Flask(__name__)
 
 # ================= 配置区 =================
-DB_PATH = 'vectors.db'
+# 数据库路径基于本文件所在目录解析，不依赖启动时的 cwd。
+# 双击/.bat/IDE/任意目录启动都指向同一个库；旧的相对路径写法在 cwd 变化时会建错库。
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(_BASE_DIR, 'vectors.db')
 PORT = 8999
 # =========================================
 
